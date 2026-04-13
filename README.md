@@ -63,6 +63,38 @@ Add the plugin from the marketplace, then install it:
 /plugin install agentcouncil@agentcouncil
 ```
 
+<details>
+<summary><strong>Alternative: manual install from source</strong></summary>
+
+If you prefer to install from source instead of the plugin marketplace:
+
+```bash
+git clone https://github.com/kiran-agentic/agentcouncil.git
+cd agentcouncil
+pip install -e .
+```
+
+Then register the MCP server in your Claude Code project settings (`.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "python3",
+      "args": ["-m", "agentcouncil.server"]
+    }
+  }
+}
+```
+
+And copy the skill files so Claude Code can find them:
+
+```bash
+cp -r skills/ .claude/skills/
+```
+
+</details>
+
 ### Use
 
 ```
