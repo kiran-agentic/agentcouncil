@@ -1,0 +1,62 @@
+[project]
+name = "agentcouncil"
+version = "0.1.0"
+description = "Multi-agent deliberation protocols for AI coding assistants. Independence before convergence."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+authors = [{name = "Kiran Krishna"}]
+keywords = ["agents", "deliberation", "mcp", "multi-agent", "ai", "consensus"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+    "fastmcp>=3.2.3",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kiran-agentic/agentcouncil"
+Repository = "https://github.com/kiran-agentic/agentcouncil"
+Issues = "https://github.com/kiran-agentic/agentcouncil/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.0",
+]
+ollama = [
+    "ollama>=0.4.0",
+]
+openrouter = [
+    "openai>=1.0",
+]
+bedrock = [
+    "boto3>=1.35",
+]
+all-backends = [
+    "agentcouncil[ollama,openrouter,bedrock]",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agentcouncil*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-m 'not real'"
+markers = ["real: requires real CLI tools (codex, claude)"]

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local development config
+.claude/
+.mcp.json
+.agentcouncil.json
+
+# Environment / secrets
+.env
+.env.*
+
+# Virtual environments
+.venv/
+env/
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+
+# Internal planning (GSD workflow artifacts)
+.planning/
