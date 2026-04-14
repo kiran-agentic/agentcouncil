@@ -384,6 +384,46 @@ async def brainstorm_tool(
     effective_backend = backend or outside_agent
     lead = ClaudeAdapter(model="opus", timeout=300)
 
+    # BP-01: Multi-agent Blind Panel mode
+    if backends and len(backends) > 1:
+        from agentcouncil.deliberation import brainstorm_panel
+        # Build brief first
+        if code_context is not None:
+            brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+            builder = BriefBuilder(adapter=brief_adapter)
+            excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
+            brief = builder.build(context, code_context=excerpts)
+        else:
+            brief = Brief(problem_statement=context, background="", constraints=[], goals=[], open_questions=[])
+
+        # Create adapters for each backend
+        outside_adapters = []
+        sessions_to_close = []
+        try:
+            for bk in backends:
+                provider = _make_provider(profile=bk)
+                runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+                session = OutsideSession(provider, runtime, profile=bk)
+                await session.open()
+                outside_adapters.append(OutsideSessionAdapter(session))
+                sessions_to_close.append((provider, session))
+
+            synthesizer = ClaudeAdapter(model="opus", timeout=300)
+            result = await brainstorm_panel(
+                brief=brief,
+                outside_adapters=outside_adapters,
+                lead_adapter=lead,
+                synthesizer_adapter=synthesizer,
+                outside_labels=backends,
+            )
+        finally:
+            for prov, sess in sessions_to_close:
+                await prov.close()
+                await sess.close()
+
+        _persist_journal("brainstorm", result, _t0)
+        return result.model_dump()
+
     if code_context is not None:
         # Complex context with code — use BriefBuilder to extract structure.
         brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
@@ -500,6 +540,29 @@ async def review_tool(
     import time as _time
     _t0 = _time.time()
 
+    # R2-01: Create journal session at protocol start
+    _journal_sid = _create_journal_session("review", _t0)
+
+    def _checkpoint_cb(phase: str, data: dict) -> None:
+        """Persist checkpoint to journal during execution."""
+        if _journal_sid:
+            try:
+                from agentcouncil.workflow import ProtocolCheckpoint, ProtocolPhase, save_checkpoint
+                cp = ProtocolCheckpoint(
+                    protocol_type="review",
+                    current_phase=ProtocolPhase(phase),
+                    input_prompt=data.get("input_prompt", ""),
+                    outside_initial=data.get("outside_initial"),
+                    lead_initial=data.get("lead_initial"),
+                    exchange_rounds_completed=data.get("round", 0),
+                    exchange_rounds_total=max(1, rounds),
+                    provider_config={"profile": backend or outside_agent},
+                    artifact_cls_name="ReviewArtifact",
+                )
+                save_checkpoint(_journal_sid, cp)
+            except Exception:
+                pass  # Non-fatal
+
     effective_backend = backend or outside_agent
 
     # Certification gate: block prompt-only models from review (CERT-04)
@@ -544,7 +607,7 @@ async def review_tool(
                 outside_session_mode=session.session_mode,
                 outside_workspace_access=session.workspace_access,
             )
-            result = await review(review_input, outside, lead, outside_meta=meta)
+            result = await review(review_input, outside, lead, outside_meta=meta, checkpoint_callback=_checkpoint_cb)
         finally:
             await provider.close()
             await session.close()
@@ -553,10 +616,10 @@ async def review_tool(
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=300)
         meta = _build_meta(backend_str, "subprocess")
-        result = await review(review_input, outside, lead)
+        result = await review(review_input, outside, lead, checkpoint_callback=_checkpoint_cb)
         result.transcript.meta = meta
 
-    _persist_journal("review", result, _t0)
+    _persist_journal("review", result, _t0, session_id=_journal_sid)
     return result.model_dump()
 
 

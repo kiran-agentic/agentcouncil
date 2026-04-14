@@ -188,15 +188,17 @@ async def resume_protocol(
 
     if checkpoint.current_phase == ProtocolPhase.proposals_received:
         # Proposals done, may need exchanges + synthesis
+        # run_deliberation loops range(exchange_rounds - 1), so to get N remaining
+        # exchange pairs we pass N + 1 as exchange_rounds
         resume_state["skip_to"] = "exchanges"
-        remaining_rounds = checkpoint.exchange_rounds_total - checkpoint.exchange_rounds_completed
+        remaining_pairs = checkpoint.exchange_rounds_total - 1 - checkpoint.exchange_rounds_completed
         return await run_deliberation(
             input_prompt=checkpoint.input_prompt,
             outside_adapter=outside_adapter,
             lead_adapter=lead_adapter,
             artifact_cls=artifact_cls,
             synthesis_prompt_fn=synthesis_fn,
-            exchange_rounds=max(1, remaining_rounds),
+            exchange_rounds=max(1, remaining_pairs + 1),
             derive_status=derive_status,
             resume_state=resume_state,
         )
