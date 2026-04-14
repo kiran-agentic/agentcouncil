@@ -24,6 +24,7 @@ __all__ = [
     "ChallengeInput",
     "FailureMode",
     "ChallengeArtifact",
+    "JournalEntry",
 ]
 
 
@@ -337,3 +338,25 @@ class ChallengeArtifact(BaseModel):
                 "failure_mode with disposition='must_harden'"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Journal persistence models (DJ-02, DJ-04)
+# ---------------------------------------------------------------------------
+
+
+class JournalEntry(BaseModel):
+    """A persisted record of a completed deliberation protocol run."""
+
+    schema_version: str = "1.0"
+    session_id: str
+    protocol_type: Literal["brainstorm", "review", "decide", "challenge"]
+    start_time: float
+    end_time: float
+    status: ConsensusStatus
+    artifact: dict  # serialized protocol-specific artifact
+    transcript: Transcript
+    events: list[dict] = Field(default_factory=list)
+    state: Optional[dict] = None
+
+    model_config = {"use_enum_values": True}
