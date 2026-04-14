@@ -543,21 +543,39 @@ async def review_tool(
     # R2-01: Create journal session at protocol start
     _journal_sid = _create_journal_session("review", _t0)
 
+    # R3-01: Mutable checkpoint state — later phases merge into this, never replace
+    _cp_state: dict = {
+        "protocol_type": "review",
+        "input_prompt": "",
+        "outside_initial": None,
+        "lead_initial": None,
+        "accumulated_turns": [],
+        "exchange_rounds_completed": 0,
+        "exchange_rounds_total": max(1, rounds),
+        "provider_config": {"profile": backend or outside_agent},
+        "artifact_cls_name": "ReviewArtifact",
+    }
+
     def _checkpoint_cb(phase: str, data: dict) -> None:
-        """Persist checkpoint to journal during execution."""
+        """Persist checkpoint to journal during execution (R3-01: merge, don't replace)."""
         if _journal_sid:
             try:
                 from agentcouncil.workflow import ProtocolCheckpoint, ProtocolPhase, save_checkpoint
+                # Merge new data into accumulated state
+                if "input_prompt" in data and data["input_prompt"]:
+                    _cp_state["input_prompt"] = data["input_prompt"]
+                if "outside_initial" in data:
+                    _cp_state["outside_initial"] = data["outside_initial"]
+                if "lead_initial" in data:
+                    _cp_state["lead_initial"] = data["lead_initial"]
+                if "round" in data:
+                    _cp_state["exchange_rounds_completed"] = data["round"]
+                if "accumulated_turns" in data:
+                    _cp_state["accumulated_turns"] = data["accumulated_turns"]
+
                 cp = ProtocolCheckpoint(
-                    protocol_type="review",
                     current_phase=ProtocolPhase(phase),
-                    input_prompt=data.get("input_prompt", ""),
-                    outside_initial=data.get("outside_initial"),
-                    lead_initial=data.get("lead_initial"),
-                    exchange_rounds_completed=data.get("round", 0),
-                    exchange_rounds_total=max(1, rounds),
-                    provider_config={"profile": backend or outside_agent},
-                    artifact_cls_name="ReviewArtifact",
+                    **_cp_state,
                 )
                 save_checkpoint(_journal_sid, cp)
             except Exception:

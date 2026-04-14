@@ -1018,6 +1018,7 @@ async def run_deliberation(
             checkpoint_callback("exchange_complete", {
                 "round": round_num + 1,
                 "exchanges": len(exchanges),
+                "accumulated_turns": [t.model_dump() for t in exchanges],
             })
 
     # Phase 3: Synthesis
