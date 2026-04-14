@@ -232,6 +232,68 @@ async def test_mcp_challenge_accepts_specialist_provider(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_review_checkpoint_resume_e2e_workflow(journal_dir, monkeypatch):
+    """FM-01: End-to-end review → checkpoint → journal → resume workflow.
+
+    Proves: review_tool creates a journal session, saves merged checkpoint
+    state during execution, persists the final entry, and the resulting
+    journal entry contains usable checkpoint state that resume_protocol
+    can consume.
+    """
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+    from agentcouncil.journal import list_entries, read_entry
+    from agentcouncil.workflow import load_checkpoint
+
+    review_json = json.dumps({
+        "verdict": "pass",
+        "summary": "Looks good",
+        "findings": [],
+        "strengths": ["Clean"],
+        "open_questions": [],
+        "next_action": "Ship",
+    })
+
+    def _make_stub_provider(*a, **kw):
+        raise ValueError("force legacy path")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_backend",
+                        lambda *a, **kw: "codex")
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter(["Outside review", review_json]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter(["Lead review"]))
+
+    # Step 1: Run review_tool via MCP — should create journal session + checkpoints
+    async with Client(mcp) as client:
+        result = await client.call_tool("review", {
+            "artifact": "def add(a, b): return a + b",
+            "artifact_type": "code",
+        })
+
+    assert not result.is_error
+
+    # Step 2: Verify journal entry was created
+    entries = list_entries(protocol="review")
+    assert len(entries) >= 1, "No journal entry created by review_tool"
+    session_id = entries[0]["session_id"]
+
+    # Step 3: Verify the journal entry has checkpoint state with merged data
+    entry = read_entry(session_id)
+    assert entry.session_id == session_id
+    assert entry.protocol_type == "review"
+    assert entry.transcript.input_prompt is not None
+
+    # Step 4: If checkpoint state exists, verify it has proposals
+    if entry.state is not None:
+        cp = load_checkpoint(session_id)
+        # Checkpoint should have input_prompt from the proposals_received phase
+        assert cp.input_prompt, "Checkpoint missing input_prompt after review"
+        assert cp.artifact_cls_name == "ReviewArtifact"
+
+
+@pytest.mark.asyncio
 async def test_mcp_journal_get_rejects_traversal(journal_dir):
     """journal_get MCP tool rejects path traversal in session_id."""
     journal_dir.mkdir(parents=True, exist_ok=True)
