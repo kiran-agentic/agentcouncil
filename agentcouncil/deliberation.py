@@ -17,6 +17,7 @@ from agentcouncil.schemas import (
     Transcript,
     TranscriptMeta,
     TranscriptTurn,
+    TurnPhase,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -37,14 +38,21 @@ def _strip_code_fences(text: str) -> str:
 
 
 class Exchange(BaseModel):
-    """A single exchange in the negotiation phase."""
+    """A single exchange in the negotiation phase.
+
+    Deprecated: Use TranscriptTurn with phase="exchange" instead (TN-04).
+    """
 
     role: str  # "outside" or "lead"
     content: str
 
 
 class RoundTranscript(BaseModel):
-    """Full provenance of a brainstorm run - one field per round."""
+    """Full provenance of a brainstorm run - one field per round.
+
+    Deprecated: brainstorm() now returns Transcript instead (TN-04).
+    Kept for backward compatibility with code that imports this class.
+    """
 
     brief_prompt: str
     outside_proposal: Optional[str] = None
@@ -58,7 +66,7 @@ class BrainstormResult(BaseModel):
     """Return type of brainstorm(). Always populated, even on partial failure."""
 
     artifact: ConsensusArtifact
-    transcript: RoundTranscript
+    transcript: Transcript
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +161,7 @@ def _partial_failure_result(
     stage: str,
     outside_proposal: Optional[str] = None,
     lead_proposal: Optional[str] = None,
-    exchanges: Optional[List[Exchange]] = None,
+    exchanges: Optional[List[TranscriptTurn]] = None,
     outside_meta: Optional[TranscriptMeta] = None,
 ) -> BrainstormResult:
     """Build a BrainstormResult with partial_failure status.
@@ -170,12 +178,12 @@ def _partial_failure_result(
         next_action="Retry or inspect adapter configuration",
         status=ConsensusStatus.partial_failure,
     )
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges or [],
-        negotiation_output=None,
+        final_output=None,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
@@ -186,7 +194,7 @@ def _unresolved_disagreement_result(
     outside_proposal: str,
     lead_proposal: str,
     negotiation_output: str,
-    exchanges: Optional[List[Exchange]] = None,
+    exchanges: Optional[List[TranscriptTurn]] = None,
     outside_meta: Optional[TranscriptMeta] = None,
 ) -> BrainstormResult:
     """Build a BrainstormResult with unresolved_disagreement status.
@@ -203,12 +211,12 @@ def _unresolved_disagreement_result(
         next_action="Review transcript and retry or accept disagreement",
         status=ConsensusStatus.unresolved_disagreement,
     )
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges or [],
-        negotiation_output=negotiation_output,
+        final_output=negotiation_output,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
@@ -219,7 +227,7 @@ def _unresolved_disagreement_result(
 # ---------------------------------------------------------------------------
 
 
-def _format_discussion(exchanges: List[Exchange]) -> str:
+def _format_discussion(exchanges: List[TranscriptTurn]) -> str:
     """Format exchange history into a readable discussion block."""
     if not exchanges:
         return "(No prior discussion — this is the first exchange.)"
@@ -330,7 +338,7 @@ async def brainstorm(
     # Exchange rounds — agents alternate free-text responses.
     # negotiation_rounds=1 means no exchanges (original behavior).
     # negotiation_rounds=2 means 1 pair of exchanges before synthesis, etc.
-    exchanges: List[Exchange] = []
+    exchanges: List[TranscriptTurn] = []
 
     for round_num in range(negotiation_rounds - 1):
         discussion = _format_discussion(exchanges)
@@ -363,7 +371,7 @@ async def brainstorm(
             )
         log.debug("[exchange %d] outside done — %.1fs", round_num + 1, time.time() - te)
         emit("step", {"agent": "codex", "step": f"exchange {round_num + 1}", "status": "done", "elapsed": time.time() - te})
-        exchanges.append(Exchange(role="outside", content=outside_response))
+        exchanges.append(TranscriptTurn(role="outside", content=outside_response, phase="exchange"))
 
         # Lead responds
         discussion = _format_discussion(exchanges)
@@ -394,7 +402,7 @@ async def brainstorm(
             )
         log.debug("[exchange %d] lead done — %.1fs", round_num + 1, time.time() - te2)
         emit("step", {"agent": "claude", "step": f"exchange {round_num + 1}", "status": "done", "elapsed": time.time() - te2})
-        exchanges.append(Exchange(role="lead", content=lead_response))
+        exchanges.append(TranscriptTurn(role="lead", content=lead_response, phase="exchange"))
 
     # Final round — Outside synthesizes into structured JSON.
     discussion = _format_discussion(exchanges)
@@ -457,12 +465,12 @@ async def brainstorm(
              artifact.status, time.time() - t0)
     emit("done", {"status": artifact.status, "elapsed": time.time() - t0})
 
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges,
-        negotiation_output=negotiation_output,
+        final_output=negotiation_output,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)

@@ -30,46 +30,33 @@ def test_brainstorm_result_import():
     assert BrainstormResult is not None
 
 
-def test_round_transcript_all_fields():
-    from agentcouncil.deliberation import RoundTranscript
-    t = RoundTranscript(
-        brief_prompt="the brief",
-        outside_proposal="outside says X",
-        lead_proposal="lead says Y",
-        negotiation_output="synthesis Z",
-    )
-    assert t.brief_prompt == "the brief"
-    assert t.outside_proposal == "outside says X"
-    assert t.lead_proposal == "lead says Y"
-    assert t.negotiation_output == "synthesis Z"
-
-
-def test_round_transcript_partial_failure():
+def test_round_transcript_still_importable():
+    """TN-04: RoundTranscript is deprecated but still importable."""
     from agentcouncil.deliberation import RoundTranscript
     t = RoundTranscript(brief_prompt="the brief")
     assert t.brief_prompt == "the brief"
-    assert t.outside_proposal is None
-    assert t.lead_proposal is None
-    assert t.negotiation_output is None
 
 
-def test_brainstorm_result_structure():
-    from agentcouncil.deliberation import BrainstormResult, RoundTranscript
+def test_brainstorm_result_uses_transcript():
+    """TN-05: BrainstormResult.transcript is now Transcript type."""
+    from agentcouncil.deliberation import BrainstormResult
+    from agentcouncil.schemas import Transcript
     artifact = _make_artifact()
-    transcript = RoundTranscript(brief_prompt="brief text")
+    transcript = Transcript(input_prompt="brief text")
     result = BrainstormResult(artifact=artifact, transcript=transcript)
     assert result.artifact.status == "consensus"
-    assert result.transcript.brief_prompt == "brief text"
+    assert result.transcript.input_prompt == "brief text"
 
 
 def test_brainstorm_result_json_roundtrip():
-    from agentcouncil.deliberation import BrainstormResult, RoundTranscript
+    from agentcouncil.deliberation import BrainstormResult
+    from agentcouncil.schemas import Transcript
     artifact = _make_artifact()
-    transcript = RoundTranscript(
-        brief_prompt="brief",
-        outside_proposal="outside",
-        lead_proposal="lead",
-        negotiation_output="negotiation",
+    transcript = Transcript(
+        input_prompt="brief",
+        outside_initial="outside",
+        lead_initial="lead",
+        final_output="negotiation",
     )
     original = BrainstormResult(artifact=artifact, transcript=transcript)
     json_str = original.model_dump_json()
@@ -77,11 +64,11 @@ def test_brainstorm_result_json_roundtrip():
     assert restored.model_dump() == original.model_dump()
 
 
-def test_round_transcript_brief_prompt_required():
-    from agentcouncil.deliberation import RoundTranscript
+def test_transcript_input_prompt_required():
+    from agentcouncil.schemas import Transcript
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
-        RoundTranscript()  # brief_prompt is required
+        Transcript()  # input_prompt is required
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +225,8 @@ async def test_outside_agent_error_returns_partial_failure():
     result = await brainstorm(_valid_brief(), outside, lead)
 
     assert result.artifact.status == "partial_failure"
-    assert result.transcript.outside_proposal is None
-    assert result.transcript.brief_prompt is not None
+    assert result.transcript.outside_initial is None
+    assert result.transcript.input_prompt is not None
     assert len(lead.calls) == 0  # lead never called
 
 
@@ -253,10 +240,10 @@ async def test_brainstorm_result_includes_transcript():
     lead = StubAdapter(["Lead: use Redis with TTL"])
     result = await brainstorm(_valid_brief(), outside, lead)
 
-    assert result.transcript.brief_prompt == _valid_brief().to_prompt()
-    assert result.transcript.outside_proposal == "Outside: use Redis"
-    assert result.transcript.lead_proposal == "Lead: use Redis with TTL"
-    assert result.transcript.negotiation_output is not None
+    assert result.transcript.input_prompt == _valid_brief().to_prompt()
+    assert result.transcript.outside_initial == "Outside: use Redis"
+    assert result.transcript.lead_initial == "Lead: use Redis with TTL"
+    assert result.transcript.final_output is not None
 
 
 @pytest.mark.asyncio
@@ -270,8 +257,8 @@ async def test_lead_agent_error_returns_partial_failure():
     result = await brainstorm(_valid_brief(), outside, lead)
 
     assert result.artifact.status == "partial_failure"
-    assert result.transcript.outside_proposal == "Outside: use Redis"
-    assert result.transcript.lead_proposal is None
+    assert result.transcript.outside_initial == "Outside: use Redis"
+    assert result.transcript.lead_initial is None
 
 
 # ---------------------------------------------------------------------------
@@ -305,9 +292,9 @@ async def test_negotiation_error_returns_partial_failure():
     result = await brainstorm(_valid_brief(), outside, lead)
 
     assert result.artifact.status == "partial_failure"
-    assert result.transcript.outside_proposal == "Outside proposal"
-    assert result.transcript.lead_proposal == "Lead proposal"
-    assert result.transcript.negotiation_output is None
+    assert result.transcript.outside_initial == "Outside proposal"
+    assert result.transcript.lead_initial == "Lead proposal"
+    assert result.transcript.final_output is None
 
 
 @pytest.mark.asyncio
@@ -337,7 +324,7 @@ async def test_unresolved_disagreement_artifact_has_meaningful_content():
     result = await brainstorm(_valid_brief(), outside, lead)
 
     assert result.artifact.status == "unresolved_disagreement"
-    assert result.transcript.negotiation_output == raw_negotiation
+    assert result.transcript.final_output == raw_negotiation
     assert result.artifact.recommended_direction  # not empty
 
 
@@ -430,7 +417,7 @@ async def test_negotiation_returning_partial_failure_normalized_to_unresolved():
     result = await brainstorm(_valid_brief(), outside, lead)
 
     assert result.artifact.status == "unresolved_disagreement"
-    assert result.transcript.negotiation_output == bad_negotiation
+    assert result.transcript.final_output == bad_negotiation
 
 
 @pytest.mark.asyncio
@@ -445,7 +432,7 @@ async def test_brainstorm_never_raises_to_caller():
 
     # Should not raise, should return a valid BrainstormResult
     assert result.artifact.status == "partial_failure"
-    assert result.transcript.brief_prompt is not None
+    assert result.transcript.input_prompt is not None
 
 
 # ---------------------------------------------------------------------------

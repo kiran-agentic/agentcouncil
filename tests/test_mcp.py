@@ -209,10 +209,10 @@ async def test_transcript_has_all_fields(monkeypatch):
 
     assert not result.is_error
     transcript = result.data["transcript"]
-    assert "brief_prompt" in transcript and transcript["brief_prompt"]
-    assert "outside_proposal" in transcript and transcript["outside_proposal"]
-    assert "lead_proposal" in transcript and transcript["lead_proposal"]
-    assert "negotiation_output" in transcript and transcript["negotiation_output"]
+    assert "input_prompt" in transcript and transcript["input_prompt"]
+    assert "outside_initial" in transcript and transcript["outside_initial"]
+    assert "lead_initial" in transcript and transcript["lead_initial"]
+    assert "final_output" in transcript and transcript["final_output"]
 
 
 @pytest.mark.asyncio
@@ -243,8 +243,8 @@ async def test_transcript_brief_prompt_contains_problem(monkeypatch):
 
     assert not result.is_error
     transcript = result.data["transcript"]
-    assert transcript["brief_prompt"] is not None
-    assert len(transcript["brief_prompt"]) > 0
+    assert transcript["input_prompt"] is not None
+    assert len(transcript["input_prompt"]) > 0
 
 
 @pytest.mark.asyncio

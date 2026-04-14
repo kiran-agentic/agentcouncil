@@ -372,9 +372,9 @@ async def brainstorm_tool(
         BrainstormResult as a dict with two top-level keys:
         - 'artifact': ConsensusArtifact with recommended_direction, agreement_points,
           disagreement_points, rejected_alternatives, open_risks, next_action, status.
-        - 'transcript': RoundTranscript with brief_prompt, outside_proposal,
-          lead_proposal, exchanges (back-and-forth discussion),
-          negotiation_output, and meta (backend provenance).
+        - 'transcript': Transcript with input_prompt, outside_initial,
+          lead_initial, exchanges (back-and-forth discussion),
+          final_output, and meta (backend provenance).
     """
     effective_backend = backend or outside_agent
     lead = ClaudeAdapter(model="opus", timeout=300)
