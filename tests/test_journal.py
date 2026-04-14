@@ -199,6 +199,47 @@ def test_journal_entry_required_fields():
     assert entry.transcript is not None
 
 
+def test_journal_entry_provenance_fields(journal_dir):
+    """DJ-03: Each transcript turn carries provenance fields."""
+    from agentcouncil.journal import write_entry, read_entry
+    from agentcouncil.schemas import TranscriptTurn
+
+    turn = TranscriptTurn(
+        role="outside",
+        content="proposal",
+        actor_id="agent-001",
+        actor_provider="codex",
+        actor_model="gpt-4.1",
+        phase="proposal",
+        timestamp=1713100000.0,
+        parent_turn_id=None,
+    )
+    entry = _make_journal_entry(
+        session_id="prov-001",
+        transcript=Transcript(input_prompt="test", exchanges=[turn]),
+    )
+    write_entry(entry)
+    restored = read_entry("prov-001")
+    t = restored.transcript.exchanges[0]
+    assert t.actor_id == "agent-001"
+    assert t.actor_provider == "codex"
+    assert t.actor_model == "gpt-4.1"
+    assert t.phase == "proposal"
+    assert t.timestamp == 1713100000.0
+
+
+def test_journal_failure_does_not_crash_protocol():
+    """DJ-11: Journal failures must not fail the protocol (non-fatal)."""
+    # This tests that _persist_journal in server.py is wrapped in try/except
+    # We verify by importing the function and confirming it doesn't raise
+    # even with bad input
+    from agentcouncil.server import _persist_journal
+
+    # Call with a non-model object — should not raise
+    _persist_journal("brainstorm", object(), 0.0)
+    # If we get here, the function handled the error gracefully
+
+
 # ---------------------------------------------------------------------------
 # TS: Turn Stream — Cursor-Based Event Retrieval
 # ---------------------------------------------------------------------------
@@ -280,3 +321,49 @@ def test_stream_events_empty(journal_dir):
     result = stream_events("ev-005")
     assert result["events"] == []
     assert result["next_cursor"] == 0
+
+
+def test_stream_events_read_only(journal_dir):
+    """TS-06: stream_events is read-only and side-effect-free."""
+    from agentcouncil.journal import write_entry, append_event, stream_events, read_entry
+
+    write_entry(_make_journal_entry(session_id="ev-006"))
+    append_event("ev-006", {"event_type": "turn_added", "data": {}})
+
+    # Call stream_events multiple times
+    r1 = stream_events("ev-006")
+    r2 = stream_events("ev-006")
+
+    # Both calls return same result — no side effects
+    assert len(r1["events"]) == len(r2["events"])
+    assert r1["next_cursor"] == r2["next_cursor"]
+
+    # Entry unchanged
+    entry = read_entry("ev-006")
+    assert len(entry.events) == 1  # still just 1 event
+
+
+def test_event_has_timestamp(journal_dir):
+    """TS-03: Each event has a timestamp."""
+    from agentcouncil.journal import write_entry, append_event, stream_events
+
+    write_entry(_make_journal_entry(session_id="ev-007"))
+    append_event("ev-007", {"event_type": "turn_added", "data": {}})
+
+    result = stream_events("ev-007")
+    assert result["events"][0]["timestamp"] > 0
+
+
+def test_event_types(journal_dir):
+    """TS-02: Events include expected types."""
+    from agentcouncil.journal import write_entry, append_event, stream_events
+
+    write_entry(_make_journal_entry(session_id="ev-008"))
+    for etype in ("turn_added", "phase_transition", "status_change"):
+        append_event("ev-008", {"event_type": etype, "data": {}})
+
+    result = stream_events("ev-008")
+    types = [e["event_type"] for e in result["events"]]
+    assert "turn_added" in types
+    assert "phase_transition" in types
+    assert "status_change" in types

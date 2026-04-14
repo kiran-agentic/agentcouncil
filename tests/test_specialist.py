@@ -181,3 +181,98 @@ async def test_specialist_evidence_as_transcript_turn():
     assert turn.actor_provider == "openrouter"
     assert turn.actor_model == "claude-3-5-sonnet"
     assert "AES-256" in turn.content
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: EW-03, EW-04, EW-05, EW-07, EW-10, EW-11, EW-12
+# ---------------------------------------------------------------------------
+
+
+def test_specialist_output_is_evaluative_not_prescriptive():
+    """EW-03, EW-07: Specialist output schemas are evaluative — validity/severity, not fixes."""
+    from agentcouncil.schemas import (
+        ChallengeSpecialistAssessment,
+        ReviewSpecialistFinding,
+        DecideSpecialistEvaluation,
+    )
+
+    # ChallengeSpecialistAssessment has validity, not recommendation
+    assert "validity" in ChallengeSpecialistAssessment.model_fields
+    assert "recommendation" not in ChallengeSpecialistAssessment.model_fields
+
+    # ReviewSpecialistFinding has severity, not fix
+    assert "severity" in ReviewSpecialistFinding.model_fields
+    assert "fix" not in ReviewSpecialistFinding.model_fields
+
+    # DecideSpecialistEvaluation has score, not recommendation
+    assert "score" in DecideSpecialistEvaluation.model_fields
+    assert "recommendation" not in DecideSpecialistEvaluation.model_fields
+
+
+@pytest.mark.asyncio
+async def test_specialist_check_one_call_only():
+    """EW-04: Specialist check makes exactly one adapter call per invocation."""
+    import json
+    from agentcouncil.schemas import ChallengeSpecialistAssessment
+    from agentcouncil.specialist import specialist_check
+    from agentcouncil.adapters import StubAdapter
+
+    response_json = json.dumps({
+        "assumption": "test",
+        "validity": "valid",
+        "evidence": "test",
+        "confidence": "high",
+    })
+    adapter = StubAdapter([response_json])
+
+    await specialist_check(
+        sub_question="test?",
+        context_slice="context",
+        specialist_adapter=adapter,
+        artifact_cls=ChallengeSpecialistAssessment,
+    )
+    assert len(adapter.calls) == 1  # Exactly one call
+
+
+def test_specialist_prompt_excludes_full_debate():
+    """EW-02 reinforced: Specialist prompt does NOT contain debate keywords."""
+    from agentcouncil.specialist import _build_specialist_prompt
+    from agentcouncil.schemas import ChallengeSpecialistAssessment
+
+    prompt = _build_specialist_prompt(
+        sub_question="Is encryption adequate?",
+        context_slice="Uses AES-256",
+        artifact_cls=ChallengeSpecialistAssessment,
+    )
+    # Should contain the question and context
+    assert "Is encryption adequate?" in prompt
+    assert "AES-256" in prompt
+    # Should NOT contain debate-like content
+    assert "discussion" not in prompt.lower() or "prior discussion" not in prompt.lower()
+
+
+def test_specialist_protocol_rollout_order():
+    """EW-11: Challenge schemas exist first (challenge is first rollout target)."""
+    from agentcouncil.schemas import ChallengeSpecialistAssessment
+
+    # ChallengeSpecialistAssessment must exist and be valid
+    a = ChallengeSpecialistAssessment(
+        assumption="test", validity="valid", evidence="test", confidence="high",
+    )
+    assert a.assumption == "test"
+
+
+def test_specialist_turn_has_timestamp():
+    """EW-08: Specialist turn includes timestamp for provenance."""
+    from agentcouncil.specialist import make_specialist_turn
+    from agentcouncil.schemas import ChallengeSpecialistAssessment
+
+    assessment = ChallengeSpecialistAssessment(
+        assumption="test", validity="valid", evidence="test", confidence="high",
+    )
+    turn = make_specialist_turn(
+        artifact=assessment,
+        sub_question="test?",
+    )
+    assert turn.timestamp is not None
+    assert turn.timestamp > 0

@@ -265,3 +265,26 @@ def test_transcript_meta_deprecated_note():
     from agentcouncil.schemas import TranscriptMeta
 
     assert "deprecated" in (TranscriptMeta.__doc__ or "").lower()
+
+
+def test_all_protocols_use_transcript():
+    """TN-01: All four protocols use the same Transcript model."""
+    from agentcouncil.schemas import Transcript, DeliberationResult
+    from agentcouncil.deliberation import BrainstormResult
+
+    # BrainstormResult uses Transcript (migrated from RoundTranscript)
+    assert BrainstormResult.model_fields["transcript"].annotation is Transcript
+    # DeliberationResult (review/decide/challenge) uses Transcript
+    assert DeliberationResult.model_fields["transcript"].annotation is Transcript
+
+
+def test_artifact_shapes_unchanged():
+    """TN-06: Existing artifact output shapes are NOT changed."""
+    from agentcouncil.schemas import (
+        ConsensusArtifact, ReviewArtifact, DecideArtifact, ChallengeArtifact,
+    )
+    # Verify key fields still exist
+    assert "recommended_direction" in ConsensusArtifact.model_fields
+    assert "verdict" in ReviewArtifact.model_fields
+    assert "outcome" in DecideArtifact.model_fields
+    assert "readiness" in ChallengeArtifact.model_fields

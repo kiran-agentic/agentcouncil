@@ -159,3 +159,97 @@ async def test_blind_panel_partial_on_failure():
 
     # Should still produce a result with agent1's contribution
     assert result.artifact.status == "consensus"
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: BP-01, BP-04, BP-07, BP-09, BP-10, BP-11, BP-13
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_synthesis_includes_all_proposals():
+    """BP-04: Synthesis prompt includes all N+1 proposals."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    agent1 = StubAdapter(["Agent1: use Redis"])
+    agent2 = StubAdapter(["Agent2: use Memcached"])
+    lead = StubAdapter(["Lead: use in-memory"])
+
+    # Capture what the synthesizer sees
+    synthesizer = StubAdapter([_negotiation_json()])
+
+    result = await brainstorm_panel(
+        brief=_valid_brief(),
+        outside_adapters=[agent1, agent2],
+        lead_adapter=lead,
+        synthesizer_adapter=synthesizer,
+    )
+
+    # Synthesizer should have seen all proposals
+    synthesis_prompt = synthesizer.calls[0]
+    assert "Agent1: use Redis" in synthesis_prompt or "Redis" in synthesis_prompt
+    assert "Agent2: use Memcached" in synthesis_prompt or "Memcached" in synthesis_prompt
+    assert "Lead: use in-memory" in synthesis_prompt or "in-memory" in synthesis_prompt
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_transcript_has_all_proposals():
+    """BP-13: All proposals persisted in transcript."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    agent1 = StubAdapter(["Proposal A"])
+    agent2 = StubAdapter(["Proposal B"])
+    agent3 = StubAdapter(["Proposal C"])
+    lead = StubAdapter(["Lead proposal"])
+    synthesizer = StubAdapter([_negotiation_json()])
+
+    result = await brainstorm_panel(
+        brief=_valid_brief(),
+        outside_adapters=[agent1, agent2, agent3],
+        lead_adapter=lead,
+        synthesizer_adapter=synthesizer,
+    )
+
+    # Transcript should have proposal turns for all agents + lead
+    proposal_turns = [
+        t for t in result.transcript.exchanges
+        if t.phase == "proposal"
+    ]
+    assert len(proposal_turns) >= 4  # 3 outside + 1 lead
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_empty_agents_raises():
+    """BP: At least 1 outside agent required."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    with pytest.raises(ValueError, match="at least 1"):
+        await brainstorm_panel(
+            brief=_valid_brief(),
+            outside_adapters=[],
+            lead_adapter=StubAdapter([]),
+            synthesizer_adapter=StubAdapter([]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_single_agent_works():
+    """BP-12: Single outside agent mode works (degenerate panel)."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    agent = StubAdapter(["Solo proposal"])
+    lead = StubAdapter(["Lead proposal"])
+    synthesizer = StubAdapter([_negotiation_json()])
+
+    result = await brainstorm_panel(
+        brief=_valid_brief(),
+        outside_adapters=[agent],
+        lead_adapter=lead,
+        synthesizer_adapter=synthesizer,
+    )
+
+    assert result.artifact.status == "consensus"

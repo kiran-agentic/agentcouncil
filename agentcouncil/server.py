@@ -868,7 +868,7 @@ def _persist_journal(
         )
         write_entry(entry)
     except Exception as e:
-        log.warning("journal persist failed (non-fatal): %s", e)
+        logging.warning("journal persist failed (non-fatal): %s", e)
 
 
 @mcp.tool(name="protocol_resume")

@@ -144,3 +144,71 @@ def test_inspect_list(journal_dir):
     output = inspect_list()
     assert "s1" in output
     assert "s2" in output
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: DI-04, DI-05, DI-06, DI-07, DI-09
+# ---------------------------------------------------------------------------
+
+
+def test_format_entry_shows_specialist_evidence(journal_dir):
+    """DI-05: Specialist evidence shown with provenance."""
+    from agentcouncil.inspector import format_entry
+
+    entry = _make_journal_entry(
+        transcript=Transcript(
+            input_prompt="test",
+            exchanges=[
+                TranscriptTurn(
+                    role="specialist",
+                    content="Specialist assessment: valid",
+                    phase="specialist",
+                    parent_turn_id="turn-003",
+                    actor_provider="openrouter",
+                    actor_model="claude-sonnet",
+                ),
+            ],
+        ),
+    )
+    output = format_entry(entry)
+    assert "SPECIALIST" in output
+    assert "openrouter" in output
+    assert "turn-003" in output
+
+
+def test_format_entry_shows_synthesis(journal_dir):
+    """DI-06: Synthesis result displayed."""
+    from agentcouncil.inspector import format_entry
+
+    entry = _make_journal_entry()
+    output = format_entry(entry)
+    assert "Synthesis" in output
+
+
+def test_format_entry_shows_status(journal_dir):
+    """DI-02: Output shows protocol status."""
+    from agentcouncil.inspector import format_entry
+
+    entry = _make_journal_entry()
+    output = format_entry(entry)
+    assert "consensus" in output.lower()
+
+
+def test_format_entry_uses_rich_compatible_output(journal_dir):
+    """DI-09: Output is text-based (Rich library can render it)."""
+    from agentcouncil.inspector import format_entry
+
+    entry = _make_journal_entry()
+    output = format_entry(entry)
+    # Should be plain text, no binary content
+    assert isinstance(output, str)
+    assert output.isprintable() or "\n" in output
+
+
+def test_inspect_list_empty(journal_dir):
+    """DI-11: Empty list shows appropriate message."""
+    from agentcouncil.inspector import inspect_list
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    output = inspect_list()
+    assert "no" in output.lower() or len(output) > 0

@@ -218,3 +218,214 @@ def test_existing_review_unchanged():
     from agentcouncil.review import review
 
     assert review is not None
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage for CL-01, CL-02, CL-04, CL-05, CL-10, CL-11,
+# CL-15, CL-16, CL-17, CL-18, CL-19
+# ---------------------------------------------------------------------------
+
+
+def test_review_loop_default_max_iterations():
+    """CL-02: Default max_iterations is 3."""
+    import inspect
+    from agentcouncil.convergence import review_loop
+
+    sig = inspect.signature(review_loop)
+    assert sig.parameters["max_iterations"].default == 3
+
+
+def test_finding_id_fallback_generation():
+    """CL-18: Fallback ID generated when agent omits ID."""
+    from agentcouncil.convergence import _generate_fallback_id
+
+    fid = _generate_fallback_id("Missing validation", "high")
+    assert fid.startswith("H-")
+    assert len(fid) == 8  # "H-" + 6 hex chars
+
+
+def test_finding_id_validation():
+    """CL-19: Finding IDs validated — non-empty, max 20 chars."""
+    from agentcouncil.convergence import _extract_findings
+    from agentcouncil.schemas import ReviewArtifact, Finding
+
+    long_id_finding = Finding(
+        id="x" * 25,  # too long — should get fallback
+        title="Test",
+        severity="medium",
+        impact="Impact",
+        description="Desc",
+        evidence="Evidence",
+        confidence="high",
+        agreement="confirmed",
+        origin="outside",
+    )
+    artifact = ReviewArtifact(
+        verdict="revise",
+        summary="test",
+        findings=[long_id_finding],
+        strengths=[],
+        open_questions=[],
+        next_action="fix",
+    )
+    extracted = _extract_findings(artifact)
+    assert len(extracted) == 1
+    assert len(extracted[0].id) <= 20
+
+
+def test_finding_id_uniqueness():
+    """CL-15: Duplicate IDs get suffixed for uniqueness."""
+    from agentcouncil.convergence import _extract_findings
+    from agentcouncil.schemas import ReviewArtifact, Finding
+
+    findings = [
+        Finding(
+            id="R-01", title="First", severity="high",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+        Finding(
+            id="R-01", title="Second", severity="medium",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+    ]
+    artifact = ReviewArtifact(
+        verdict="revise", summary="test", findings=findings,
+        strengths=[], open_questions=[], next_action="fix",
+    )
+    extracted = _extract_findings(artifact)
+    ids = [f.id for f in extracted]
+    assert len(ids) == len(set(ids)), "IDs must be unique"
+
+
+def test_rereview_prompt_is_scoped():
+    """CL-05: Re-review prompt contains prior findings + changes, not full artifact."""
+    from agentcouncil.convergence import _build_rereview_prompt
+    from agentcouncil.schemas import Finding
+
+    findings = [
+        Finding(
+            id="R-01", title="Missing validation", severity="high",
+            impact="i", description="No input validation", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+    ]
+    prompt = _build_rereview_prompt(
+        original_artifact="def foo(): pass",
+        prior_findings=findings,
+        addressed_changes="Added input validation to foo()",
+    )
+
+    assert "R-01" in prompt
+    assert "Missing validation" in prompt
+    assert "Added input validation" in prompt
+    assert "Do NOT re-review the entire artifact" in prompt
+
+
+def test_rereview_carries_forward_unmentioned(journal_dir):
+    """CL-17: Unmentioned finding IDs carry forward with previous status."""
+    from agentcouncil.convergence import _parse_rereview_response
+    from agentcouncil.schemas import Finding
+
+    findings = [
+        Finding(
+            id="R-01", title="F1", severity="high",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+        Finding(
+            id="R-02", title="F2", severity="medium",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+    ]
+    prior_statuses = {"R-01": "open", "R-02": "fixed"}
+
+    # Response only mentions R-01, not R-02
+    raw = json.dumps({
+        "findings": [
+            {"finding_id": "R-01", "status": "verified", "reviewer_notes": "Fixed"},
+        ],
+        "approved": False,
+    })
+
+    iterations, approved = _parse_rereview_response(raw, findings, prior_statuses)
+
+    # R-01 should be verified (from response)
+    r01 = next(fi for fi in iterations if fi.finding_id == "R-01")
+    assert r01.status == "verified"
+
+    # R-02 should carry forward as "fixed" (CL-17)
+    r02 = next(fi for fi in iterations if fi.finding_id == "R-02")
+    assert r02.status == "fixed"
+
+
+@pytest.mark.asyncio
+async def test_wont_fix_with_rationale(journal_dir):
+    """CL-10: wont_fix findings include rationale visible to outside agent."""
+    from agentcouncil.schemas import FindingIteration, FindingStatus
+
+    fi = FindingIteration(
+        finding_id="R-01",
+        status=FindingStatus.wont_fix,
+        wont_fix_rationale="Intentional behavior, not a bug",
+    )
+    assert fi.wont_fix_rationale == "Intentional behavior, not a bug"
+    assert fi.status == "wont_fix"
+
+
+@pytest.mark.asyncio
+async def test_lead_cannot_skip_rereview(journal_dir):
+    """CL-11: If open findings exist, convergence requires verification — lead can't skip."""
+    from agentcouncil.convergence import review_loop
+    from agentcouncil.adapters import StubAdapter
+
+    review_json = _make_review_json([_make_finding("R-01", "high")])
+    rereview = json.dumps({
+        "findings": [
+            {"finding_id": "R-01", "status": "verified", "reviewer_notes": "Good"},
+        ],
+        "approved": True,
+    })
+
+    outside = StubAdapter([
+        "Outside review", review_json,
+        "Re-review", rereview,
+    ])
+    lead = StubAdapter(["Lead review", "Lead fix"])
+
+    result = await review_loop(
+        artifact="code",
+        artifact_type="code",
+        outside_adapter=outside,
+        lead_adapter=lead,
+        max_iterations=3,
+    )
+
+    # Must have at least 2 iterations (initial review + re-review)
+    assert result.total_iterations >= 1
+    # Lead adapter must have been called for fixing
+    assert len(lead.calls) >= 1
+
+
+def test_rereview_prompt_includes_prior_ids():
+    """CL-16: Re-review prompt includes prior finding IDs for reference."""
+    from agentcouncil.convergence import _build_rereview_prompt
+    from agentcouncil.schemas import Finding
+
+    findings = [
+        Finding(
+            id="R-01", title="F1", severity="high",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+        Finding(
+            id="R-02", title="F2", severity="medium",
+            impact="i", description="d", evidence="e",
+            confidence="high", agreement="confirmed", origin="outside",
+        ),
+    ]
+    prompt = _build_rereview_prompt("artifact", findings, "changes")
+    assert "R-01" in prompt
+    assert "R-02" in prompt

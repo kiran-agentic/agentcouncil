@@ -336,3 +336,40 @@ async def test_resume_completed_protocol_raises(journal_dir):
 
     with pytest.raises(ValueError, match="completed"):
         await resume_protocol("done-001", StubAdapter([]), StubAdapter([]))
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: RP-06, RP-08
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_no_mid_turn():
+    """RP-08: No arbitrary mid-turn checkpointing — only phase boundaries."""
+    from agentcouncil.workflow import ProtocolPhase
+
+    # All phases are named boundaries, not arbitrary points
+    valid_phases = {p.value for p in ProtocolPhase}
+    assert "mid_turn" not in valid_phases
+    assert "arbitrary" not in valid_phases
+    # Only phase boundaries exist
+    assert valid_phases == {
+        "brief_sent", "proposals_received", "exchange_complete",
+        "before_synthesis", "completed",
+    }
+
+
+def test_checkpoint_review_only_initial():
+    """RP-06: Initial implementation targets review protocol."""
+    from agentcouncil.workflow import ProtocolCheckpoint, ProtocolPhase
+
+    # Review checkpoint is valid
+    cp = ProtocolCheckpoint(
+        protocol_type="review",
+        current_phase=ProtocolPhase.proposals_received,
+        input_prompt="review this",
+        exchange_rounds_completed=0,
+        exchange_rounds_total=1,
+        provider_config={},
+        artifact_cls_name="ReviewArtifact",
+    )
+    assert cp.protocol_type == "review"
