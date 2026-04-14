@@ -163,30 +163,51 @@ async def resume_protocol(
     else:
         raise ValueError(f"resume not supported for protocol: {checkpoint.protocol_type}")
 
-    # Resume from checkpoint phase
+    # R-01: Build resume_state from checkpoint to inject into run_deliberation
+    from agentcouncil.deliberation import run_deliberation
+
+    resume_state: dict[str, Any] = {
+        "outside_initial": checkpoint.outside_initial,
+        "lead_initial": checkpoint.lead_initial,
+        "exchanges": [t.model_dump() for t in checkpoint.accumulated_turns],
+    }
+
     if checkpoint.current_phase == ProtocolPhase.before_synthesis:
-        # Only synthesis remains — call run_deliberation with pre-populated state
-        from agentcouncil.deliberation import run_deliberation
+        # Only synthesis remains — skip proposals and exchanges
+        resume_state["skip_to"] = "synthesis"
         return await run_deliberation(
             input_prompt=checkpoint.input_prompt,
             outside_adapter=outside_adapter,
             lead_adapter=lead_adapter,
             artifact_cls=artifact_cls,
             synthesis_prompt_fn=synthesis_fn,
-            exchange_rounds=1,  # no more exchanges needed
+            exchange_rounds=1,
             derive_status=derive_status,
+            resume_state=resume_state,
         )
 
-    # For other phases, run full deliberation from the beginning
-    # (future: skip completed phases using accumulated state)
-    from agentcouncil.deliberation import run_deliberation
-    remaining_rounds = checkpoint.exchange_rounds_total - checkpoint.exchange_rounds_completed
+    if checkpoint.current_phase == ProtocolPhase.proposals_received:
+        # Proposals done, may need exchanges + synthesis
+        resume_state["skip_to"] = "exchanges"
+        remaining_rounds = checkpoint.exchange_rounds_total - checkpoint.exchange_rounds_completed
+        return await run_deliberation(
+            input_prompt=checkpoint.input_prompt,
+            outside_adapter=outside_adapter,
+            lead_adapter=lead_adapter,
+            artifact_cls=artifact_cls,
+            synthesis_prompt_fn=synthesis_fn,
+            exchange_rounds=max(1, remaining_rounds),
+            derive_status=derive_status,
+            resume_state=resume_state,
+        )
+
+    # For earlier phases (brief_sent), restart from beginning
     return await run_deliberation(
         input_prompt=checkpoint.input_prompt,
         outside_adapter=outside_adapter,
         lead_adapter=lead_adapter,
         artifact_cls=artifact_cls,
         synthesis_prompt_fn=synthesis_fn,
-        exchange_rounds=max(1, remaining_rounds),
+        exchange_rounds=max(1, checkpoint.exchange_rounds_total),
         derive_status=derive_status,
     )

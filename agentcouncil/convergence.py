@@ -251,9 +251,11 @@ async def review_loop(
             f"The following findings need to be addressed:\n{findings_summary}\n\n"
             f"Describe what changes you would make to fix each finding."
         )
+        from agentcouncil.adapters import AdapterError
+
         try:
             addressed_changes = await lead_adapter.acall(lead_prompt)
-        except Exception as e:
+        except AdapterError as e:
             log.warning("lead failed in convergence iteration %d: %s", iter_num, e)
             addressed_changes = f"Lead error: {e}"
 
@@ -263,7 +265,7 @@ async def review_loop(
         )
         try:
             rereview_response = await outside_adapter.acall(rereview_prompt)
-        except Exception as e:
+        except AdapterError as e:
             log.warning("outside failed in convergence re-review %d: %s", iter_num, e)
             break
 

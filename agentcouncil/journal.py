@@ -27,6 +27,23 @@ log = logging.getLogger("agentcouncil.journal")
 
 JOURNAL_DIR = Path.home() / ".agentcouncil" / "journal"
 
+# R-03: session_id validation — reject path traversal attempts
+_SAFE_SESSION_ID_RE = __import__("re").compile(r"^[a-zA-Z0-9_\-]+$")
+
+
+def _validate_session_id(session_id: str) -> None:
+    """Reject session_ids that could escape the journal directory."""
+    if not session_id or not _SAFE_SESSION_ID_RE.match(session_id):
+        raise ValueError(
+            f"invalid session_id: {session_id!r} — "
+            "must contain only alphanumeric, hyphen, or underscore characters"
+        )
+    # Belt-and-suspenders: verify resolved path stays under JOURNAL_DIR
+    resolved = (JOURNAL_DIR / f"{session_id}.json").resolve()
+    journal_resolved = JOURNAL_DIR.resolve()
+    if not str(resolved).startswith(str(journal_resolved)):
+        raise ValueError(f"session_id would escape journal directory: {session_id!r}")
+
 
 def _ensure_dir() -> None:
     """Create journal directory if it doesn't exist (DJ-10: lazy)."""
@@ -44,6 +61,7 @@ def write_entry(entry: JournalEntry) -> Path:
     Returns:
         Path to the written file.
     """
+    _validate_session_id(entry.session_id)
     _ensure_dir()
     target = JOURNAL_DIR / f"{entry.session_id}.json"
     data = entry.model_dump_json(indent=2)
@@ -78,6 +96,7 @@ def read_entry(session_id: str) -> JournalEntry:
     Raises:
         ValueError: If session_id is unknown (file not found).
     """
+    _validate_session_id(session_id)
     target = JOURNAL_DIR / f"{session_id}.json"
     if not target.exists():
         raise ValueError(f"unknown session_id: {session_id}")
@@ -136,6 +155,7 @@ def append_event(session_id: str, event: dict) -> None:
     """Append an event to a journal entry's event log (TS-01, TS-09).
 
     Assigns a monotonic event_id and timestamp automatically.
+    Uses file locking to prevent race conditions (R-04).
 
     Args:
         session_id: Journal session to append to.
@@ -144,20 +164,52 @@ def append_event(session_id: str, event: dict) -> None:
     Raises:
         ValueError: If session_id is unknown.
     """
+    import fcntl
     import time as _time
 
-    entry = read_entry(session_id)
+    _validate_session_id(session_id)
+    target = JOURNAL_DIR / f"{session_id}.json"
+    if not target.exists():
+        raise ValueError(f"unknown session_id: {session_id}")
 
-    # Assign monotonic event_id (TS-03, TS-07)
-    next_id = len(entry.events) + 1
-    event_record = {
-        "event_id": next_id,
-        "event_type": event.get("event_type", "unknown"),
-        "timestamp": _time.time(),
-        "data": event.get("data", {}),
-    }
-    entry.events.append(event_record)
-    write_entry(entry)
+    # R-04: File lock to prevent concurrent read-modify-write races
+    lock_path = JOURNAL_DIR / f"{session_id}.lock"
+    _ensure_dir()
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        entry = JournalEntry.model_validate_json(target.read_text())
+
+        next_id = len(entry.events) + 1
+        event_record = {
+            "event_id": next_id,
+            "event_type": event.get("event_type", "unknown"),
+            "timestamp": _time.time(),
+            "data": event.get("data", {}),
+        }
+        entry.events.append(event_record)
+
+        # Atomic write under lock
+        data = entry.model_dump_json(indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=JOURNAL_DIR, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(data)
+            os.replace(tmp_path, target)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def stream_events(

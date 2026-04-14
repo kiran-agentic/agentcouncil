@@ -344,6 +344,7 @@ async def brainstorm_tool(
     rounds: int = 1,
     backend: str | None = None,
     outside_agent: str | None = None,
+    backends: list[str] | None = None,
 ) -> dict:
     """Run the AgentCouncil deliberation protocol and return a consensus artifact.
 
@@ -661,6 +662,7 @@ async def challenge_tool(
     rounds: int = 2,
     backend: str | None = None,
     outside_agent: str | None = None,
+    specialist_provider: str | None = None,
 ) -> dict:
     """Run the AgentCouncil challenge protocol -- adversarial stress-testing.
 
@@ -830,14 +832,42 @@ def show_effective_config_tool(
 # ---------------------------------------------------------------------------
 
 
+def _create_journal_session(protocol_type: str, start_time: float) -> str | None:
+    """Create a journal entry at protocol start so checkpoints can attach (R-02).
+
+    Returns session_id on success, None on failure. Never raises.
+    """
+    try:
+        from agentcouncil.journal import write_entry
+        from agentcouncil.schemas import Transcript
+
+        session_id = str(uuid.uuid4())
+        entry = JournalEntry(
+            session_id=session_id,
+            protocol_type=protocol_type,
+            start_time=start_time,
+            end_time=0.0,
+            status="consensus",
+            artifact={},
+            transcript=Transcript(input_prompt="(in progress)"),
+        )
+        write_entry(entry)
+        return session_id
+    except Exception as e:
+        logging.warning("journal session create failed (non-fatal): %s", e)
+        return None
+
+
 def _persist_journal(
     protocol_type: str,
     result: object,
     start_time: float,
+    session_id: str | None = None,
 ) -> None:
     """Persist a protocol result to the journal (DJ-01, DJ-11).
 
-    Never raises — journal failures must not fail the protocol.
+    If session_id is provided, updates the existing entry.
+    Otherwise creates a new one. Never raises.
     """
     import time as _time
 
@@ -858,7 +888,7 @@ def _persist_journal(
 
         transcript = Transcript.model_validate(transcript_data)
         entry = JournalEntry(
-            session_id=str(uuid.uuid4()),
+            session_id=session_id or str(uuid.uuid4()),
             protocol_type=protocol_type,
             start_time=start_time,
             end_time=_time.time(),

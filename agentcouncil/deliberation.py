@@ -855,6 +855,7 @@ async def run_deliberation(
     derive_status: Optional[DeriveStatus] = None,
     outside_meta: Optional[TranscriptMeta] = None,
     checkpoint_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    resume_state: Optional[Dict[str, Any]] = None,
 ) -> DeliberationResult:
     """Run the dual-independent deliberation protocol and return a structured result.
 
@@ -896,31 +897,42 @@ async def run_deliberation(
               len(input_prompt), exchange_rounds)
     emit("start", {"exchange_rounds": exchange_rounds})
 
-    # Phase 1: Independent initial analysis (COM-06)
-    # Outside agent sees only input_prompt
-    emit("step", {"agent": "outside", "step": "initial", "status": "active"})
-    try:
-        outside_initial = await outside_adapter.acall(input_prompt)
-    except AdapterError as e:
-        log.warning("outside initial failed: %s", e)
-        emit("step", {"agent": "outside", "step": "initial", "status": "error"})
-        return _generic_partial_failure(
-            artifact_cls, input_prompt, str(e), "outside",
-            outside_meta=outside_meta,
-        )
-    emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+    # R-01: Resume from saved state if provided
+    _skip_to_synthesis = False
+    if resume_state is not None:
+        outside_initial = resume_state.get("outside_initial")
+        lead_initial = resume_state.get("lead_initial")
+        skip_phase = resume_state.get("skip_to", "")
+        if outside_initial and lead_initial and skip_phase == "synthesis":
+            _skip_to_synthesis = True
+            log.debug("resuming from checkpoint — skipping to synthesis")
 
-    # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
-    lead_prompt = lead_input_prompt if lead_input_prompt is not None else input_prompt
-    emit("step", {"agent": "lead", "step": "initial", "status": "active"})
-    try:
-        lead_initial = await lead_adapter.acall(lead_prompt)
-    except AdapterError as e:
-        log.warning("lead initial failed: %s", e)
-        emit("step", {"agent": "lead", "step": "initial", "status": "error"})
-        return _generic_partial_failure(
-            artifact_cls, input_prompt, str(e), "lead",
-            outside_initial=outside_initial,
+    if not _skip_to_synthesis:
+        # Phase 1: Independent initial analysis (COM-06)
+        # Outside agent sees only input_prompt
+        emit("step", {"agent": "outside", "step": "initial", "status": "active"})
+        try:
+            outside_initial = await outside_adapter.acall(input_prompt)
+        except AdapterError as e:
+            log.warning("outside initial failed: %s", e)
+            emit("step", {"agent": "outside", "step": "initial", "status": "error"})
+            return _generic_partial_failure(
+                artifact_cls, input_prompt, str(e), "outside",
+                outside_meta=outside_meta,
+            )
+        emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+
+        # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
+        lead_prompt = lead_input_prompt if lead_input_prompt is not None else input_prompt
+        emit("step", {"agent": "lead", "step": "initial", "status": "active"})
+        try:
+            lead_initial = await lead_adapter.acall(lead_prompt)
+        except AdapterError as e:
+            log.warning("lead initial failed: %s", e)
+            emit("step", {"agent": "lead", "step": "initial", "status": "error"})
+            return _generic_partial_failure(
+                artifact_cls, input_prompt, str(e), "lead",
+                outside_initial=outside_initial,
             outside_meta=outside_meta,
         )
     emit("step", {"agent": "lead", "step": "initial", "status": "done"})
@@ -935,8 +947,11 @@ async def run_deliberation(
 
     # Phase 2: Exchange rounds
     exchanges: List[TranscriptTurn] = []
+    if resume_state and resume_state.get("exchanges"):
+        exchanges = [TranscriptTurn.model_validate(t) if isinstance(t, dict) else t
+                     for t in resume_state["exchanges"]]
 
-    for round_num in range(exchange_rounds - 1):
+    for round_num in range(exchange_rounds - 1 if not _skip_to_synthesis else 0):
         discussion = _format_exchange_discussion(exchanges)
 
         # Outside exchange
@@ -960,7 +975,12 @@ async def run_deliberation(
                 exchanges=exchanges,
                 outside_meta=outside_meta,
             )
-        exchanges.append(TranscriptTurn(role="outside", content=outside_response))
+        exchanges.append(TranscriptTurn(
+            role="outside", content=outside_response, phase="exchange",
+            actor_provider=outside_meta.outside_provider if outside_meta else None,
+            actor_model=outside_meta.outside_model if outside_meta else None,
+            timestamp=time.time(),
+        ))
         emit("step", {"agent": "outside", "step": f"exchange {round_num + 1}", "status": "done"})
 
         # Lead exchange
@@ -985,7 +1005,12 @@ async def run_deliberation(
                 exchanges=exchanges,
                 outside_meta=outside_meta,
             )
-        exchanges.append(TranscriptTurn(role="lead", content=lead_response))
+        exchanges.append(TranscriptTurn(
+            role="lead", content=lead_response, phase="exchange",
+            actor_provider=outside_meta.lead_backend if outside_meta else None,
+            actor_model=outside_meta.lead_model if outside_meta else None,
+            timestamp=time.time(),
+        ))
         emit("step", {"agent": "lead", "step": f"exchange {round_num + 1}", "status": "done"})
 
         # Checkpoint: exchange round complete (RP-02)

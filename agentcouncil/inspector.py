@@ -18,6 +18,7 @@ __all__ = [
     "format_entry_json",
     "inspect_session",
     "inspect_list",
+    "inspect_watch",
 ]
 
 log = logging.getLogger("agentcouncil.inspector")
@@ -164,6 +165,45 @@ def inspect_list() -> str:
     return "\n".join(lines)
 
 
+def inspect_watch(session_id: str, poll_interval: float = 2.0, max_polls: int = 0) -> list[str]:
+    """Watch a session for new events via Turn Stream cursors (DI-07).
+
+    Polls journal_stream at the given interval. Returns accumulated
+    event summaries. When max_polls > 0, stops after that many polls
+    (for testing). When max_polls == 0, runs indefinitely (CLI mode).
+
+    Args:
+        session_id: Session to watch.
+        poll_interval: Seconds between polls (default 2).
+        max_polls: Stop after N polls (0 = unlimited).
+
+    Returns:
+        List of event summary strings collected during watching.
+    """
+    import time
+
+    from agentcouncil.journal import stream_events
+
+    cursor = 0
+    collected: list[str] = []
+    polls_done = 0
+
+    while True:
+        result = stream_events(session_id, since_cursor=cursor if cursor > 0 else None)
+        for event in result["events"]:
+            summary = f"[{event['event_type']}] id={event['event_id']}"
+            collected.append(summary)
+        cursor = result["next_cursor"]
+
+        polls_done += 1
+        if max_polls > 0 and polls_done >= max_polls:
+            break
+        if max_polls == 0:
+            time.sleep(poll_interval)
+
+    return collected
+
+
 def main():
     """CLI entry point for agentcouncil inspect."""
     import sys
@@ -171,7 +211,7 @@ def main():
     args = sys.argv[1:]
 
     if not args or args[0] == "--help":
-        print("Usage: agentcouncil inspect <session_id> [--json] [--list]")
+        print("Usage: agentcouncil inspect <session_id> [--json] [--list] [--watch]")
         return
 
     if args[0] == "--list" or args[0] == "list":
@@ -179,6 +219,16 @@ def main():
         return
 
     session_id = args[0]
+
+    if "--watch" in args:
+        print(f"Watching session {session_id} (Ctrl+C to stop)...")
+        try:
+            events = inspect_watch(session_id, poll_interval=2.0)
+            for e in events:
+                print(e)
+        except KeyboardInterrupt:
+            print("\nStopped watching.")
+        return
 
     if "--json" in args:
         from agentcouncil.journal import read_entry
