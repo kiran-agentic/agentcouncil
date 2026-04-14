@@ -871,6 +871,51 @@ def _persist_journal(
         log.warning("journal persist failed (non-fatal): %s", e)
 
 
+@mcp.tool(name="protocol_resume")
+async def protocol_resume_tool(
+    session_id: str,
+    profile: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Resume a checkpointed protocol run from its last phase boundary.
+
+    Reconstructs protocol state from the journal and continues execution.
+    Returns the same artifact type as a fresh run (RP-09).
+
+    Args:
+        session_id: Journal session ID with saved checkpoint.
+        profile: Optional backend profile for the outside agent.
+        model: Optional model override.
+
+    Returns:
+        DeliberationResult as dict.
+
+    Raises:
+        ValueError: If session is unknown, has no checkpoint, or is completed.
+    """
+    from agentcouncil.workflow import resume_protocol
+
+    lead = ClaudeAdapter(model="opus", timeout=300)
+
+    try:
+        provider = _make_provider(profile=profile, model=model)
+        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        session = OutsideSession(provider, runtime, profile=profile, model=model)
+        await session.open()
+        try:
+            outside = OutsideSessionAdapter(session)
+            result = await resume_protocol(session_id, outside, lead)
+        finally:
+            await provider.close()
+            await session.close()
+    except ValueError:
+        backend_str = resolve_outside_backend(profile)
+        outside = resolve_outside_adapter(profile, timeout=300)
+        result = await resume_protocol(session_id, outside, lead)
+
+    return result.model_dump()
+
+
 @mcp.tool(name="journal_list")
 def journal_list_tool(
     limit: int = 20,

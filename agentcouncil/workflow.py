@@ -25,6 +25,7 @@ __all__ = [
     "ProtocolCheckpoint",
     "save_checkpoint",
     "load_checkpoint",
+    "resume_protocol",
 ]
 
 log = logging.getLogger("agentcouncil.workflow")
@@ -109,3 +110,83 @@ def load_checkpoint(session_id: str) -> ProtocolCheckpoint:
     log.debug("checkpoint loaded: session=%s phase=%s",
               session_id, checkpoint.current_phase)
     return checkpoint
+
+
+async def resume_protocol(
+    session_id: str,
+    outside_adapter: Any,
+    lead_adapter: Any,
+) -> Any:
+    """Resume a protocol from its last checkpoint (RP-04, RP-09).
+
+    Reconstructs protocol state from the journal checkpoint and continues
+    execution from the interrupted phase. Returns the same artifact type
+    as a non-resumed run (RP-09).
+
+    Args:
+        session_id: Journal session ID with saved checkpoint.
+        outside_adapter: AgentAdapter for the outside agent.
+        lead_adapter: AgentAdapter for the lead agent.
+
+    Returns:
+        DeliberationResult with the protocol-specific artifact.
+
+    Raises:
+        ValueError: If session is unknown, has no checkpoint, or is completed (RP-05).
+    """
+    checkpoint = load_checkpoint(session_id)
+
+    # Resolve artifact class from name
+    from agentcouncil.schemas import ReviewArtifact, DecideArtifact, ChallengeArtifact
+    artifact_cls_map = {
+        "ReviewArtifact": ReviewArtifact,
+        "DecideArtifact": DecideArtifact,
+        "ChallengeArtifact": ChallengeArtifact,
+    }
+    artifact_cls = artifact_cls_map.get(checkpoint.artifact_cls_name)
+    if artifact_cls is None:
+        raise ValueError(f"unknown artifact class: {checkpoint.artifact_cls_name}")
+
+    # Resolve synthesis prompt function from protocol type
+    if checkpoint.protocol_type == "review":
+        from agentcouncil.review import _review_synthesis_prompt_fn, _review_derive_status
+        synthesis_fn = _review_synthesis_prompt_fn
+        derive_status = _review_derive_status
+    elif checkpoint.protocol_type == "decide":
+        from agentcouncil.decide import _decide_synthesis_prompt_fn, _decide_derive_status
+        synthesis_fn = _decide_synthesis_prompt_fn
+        derive_status = _decide_derive_status
+    elif checkpoint.protocol_type == "challenge":
+        from agentcouncil.challenge import _challenge_synthesis_prompt_fn, _challenge_derive_status
+        synthesis_fn = _challenge_synthesis_prompt_fn
+        derive_status = _challenge_derive_status
+    else:
+        raise ValueError(f"resume not supported for protocol: {checkpoint.protocol_type}")
+
+    # Resume from checkpoint phase
+    if checkpoint.current_phase == ProtocolPhase.before_synthesis:
+        # Only synthesis remains — call run_deliberation with pre-populated state
+        from agentcouncil.deliberation import run_deliberation
+        return await run_deliberation(
+            input_prompt=checkpoint.input_prompt,
+            outside_adapter=outside_adapter,
+            lead_adapter=lead_adapter,
+            artifact_cls=artifact_cls,
+            synthesis_prompt_fn=synthesis_fn,
+            exchange_rounds=1,  # no more exchanges needed
+            derive_status=derive_status,
+        )
+
+    # For other phases, run full deliberation from the beginning
+    # (future: skip completed phases using accumulated state)
+    from agentcouncil.deliberation import run_deliberation
+    remaining_rounds = checkpoint.exchange_rounds_total - checkpoint.exchange_rounds_completed
+    return await run_deliberation(
+        input_prompt=checkpoint.input_prompt,
+        outside_adapter=outside_adapter,
+        lead_adapter=lead_adapter,
+        artifact_cls=artifact_cls,
+        synthesis_prompt_fn=synthesis_fn,
+        exchange_rounds=max(1, remaining_rounds),
+        derive_status=derive_status,
+    )

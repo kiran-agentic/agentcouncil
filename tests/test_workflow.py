@@ -237,3 +237,102 @@ async def test_run_deliberation_checkpoint_callback():
     assert len(checkpoints) >= 2
     phases = [cp[0] for cp in checkpoints]
     assert "proposals_received" in phases
+
+
+# ---------------------------------------------------------------------------
+# RP-04, RP-05, RP-09: Resume tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resume_protocol_from_checkpoint(journal_dir):
+    """RP-04, RP-09: resume_protocol reconstructs state and completes with same artifact type."""
+    import json
+    from agentcouncil.workflow import (
+        ProtocolCheckpoint, ProtocolPhase,
+        save_checkpoint, resume_protocol,
+    )
+    from agentcouncil.journal import write_entry
+    from agentcouncil.schemas import JournalEntry, Transcript, ReviewArtifact
+    from agentcouncil.adapters import StubAdapter
+
+    review_json = json.dumps({
+        "verdict": "pass",
+        "summary": "Looks good",
+        "findings": [],
+        "strengths": ["Clean"],
+        "open_questions": [],
+        "next_action": "Ship",
+    })
+
+    # Create a journal entry with a checkpoint at proposals_received
+    entry = JournalEntry(
+        session_id="resume-001",
+        protocol_type="review",
+        start_time=100.0,
+        end_time=0.0,
+        status="consensus",
+        artifact={},
+        transcript=Transcript(input_prompt="Review this code"),
+    )
+    write_entry(entry)
+
+    cp = ProtocolCheckpoint(
+        protocol_type="review",
+        current_phase=ProtocolPhase.before_synthesis,
+        input_prompt="Review this code",
+        outside_initial="Outside: looks risky",
+        lead_initial="Lead: seems fine",
+        exchange_rounds_completed=0,
+        exchange_rounds_total=1,
+        provider_config={"profile": "stub"},
+        artifact_cls_name="ReviewArtifact",
+    )
+    save_checkpoint("resume-001", cp)
+
+    # Resume with a stub adapter that provides synthesis
+    outside = StubAdapter([review_json])
+    lead = StubAdapter([])
+
+    result = await resume_protocol("resume-001", outside, lead)
+
+    # RP-09: same artifact type as non-resumed run
+    assert isinstance(result.artifact, ReviewArtifact)
+    assert result.artifact.verdict == "pass"
+
+
+@pytest.mark.asyncio
+async def test_resume_completed_protocol_raises(journal_dir):
+    """RP-05: resume on completed protocol raises ValueError."""
+    from agentcouncil.workflow import (
+        ProtocolCheckpoint, ProtocolPhase,
+        save_checkpoint, resume_protocol,
+    )
+    from agentcouncil.journal import write_entry
+    from agentcouncil.schemas import JournalEntry, Transcript
+    from agentcouncil.adapters import StubAdapter
+
+    entry = JournalEntry(
+        session_id="done-001",
+        protocol_type="review",
+        start_time=100.0,
+        end_time=200.0,
+        status="consensus",
+        artifact={},
+        transcript=Transcript(input_prompt="test"),
+    )
+    write_entry(entry)
+
+    cp = ProtocolCheckpoint(
+        protocol_type="review",
+        current_phase=ProtocolPhase.completed,
+        input_prompt="test",
+        exchange_rounds_completed=0,
+        exchange_rounds_total=1,
+        provider_config={},
+        artifact_cls_name="ReviewArtifact",
+    )
+    save_checkpoint("done-001", cp)
+
+    with pytest.raises(ValueError, match="completed"):
+        await resume_protocol("done-001", StubAdapter([]), StubAdapter([]))
