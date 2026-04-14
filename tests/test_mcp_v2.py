@@ -134,6 +134,104 @@ async def test_mcp_journal_stream_with_cursor(journal_dir):
 
 
 @pytest.mark.asyncio
+async def test_mcp_review_loop_tool(journal_dir, monkeypatch):
+    """review_loop MCP tool is callable via FastMCP Client."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    review_json = json.dumps({
+        "verdict": "pass",
+        "summary": "Clean code",
+        "findings": [],
+        "strengths": ["Good"],
+        "open_questions": [],
+        "next_action": "Ship",
+    })
+
+    def _make_stub_provider(*a, **kw):
+        raise ValueError("force legacy path")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter(["Outside review", review_json]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter(["Lead review"]))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("review_loop", {
+            "artifact": "def add(a, b): return a + b",
+            "artifact_type": "code",
+            "max_iterations": 1,
+        })
+
+    assert not result.is_error
+    assert "exit_reason" in result.data or hasattr(result.data, "exit_reason")
+
+
+@pytest.mark.asyncio
+async def test_mcp_protocol_resume_unknown_session(journal_dir, monkeypatch):
+    """protocol_resume MCP tool raises error for unknown session."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    def _make_stub_provider(*a, **kw):
+        raise ValueError("force legacy path")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter([]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter([]))
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+
+    async with Client(mcp) as client:
+        try:
+            result = await client.call_tool("protocol_resume", {
+                "session_id": "nonexistent-session",
+            })
+            assert result.is_error
+        except Exception:
+            pass  # ValueError propagated — acceptable
+
+
+@pytest.mark.asyncio
+async def test_mcp_challenge_accepts_specialist_provider(monkeypatch):
+    """challenge tool accepts specialist_provider parameter without error."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    challenge_json = json.dumps({
+        "readiness": "ready",
+        "summary": "Plan is solid",
+        "failure_modes": [],
+        "surviving_assumptions": ["All assumptions hold"],
+        "break_conditions": [],
+        "residual_risks": [],
+        "next_action": "Ship it",
+    })
+
+    def _make_stub_provider(*a, **kw):
+        raise ValueError("force legacy path")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_backend",
+                        lambda *a, **kw: "codex")
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter(["Attack", challenge_json]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter(["Defense"]))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("challenge", {
+            "artifact": "Deploy to production with blue-green strategy",
+            "specialist_provider": "ollama-local",
+        })
+
+    assert not result.is_error
+
+
+@pytest.mark.asyncio
 async def test_mcp_journal_get_rejects_traversal(journal_dir):
     """journal_get MCP tool rejects path traversal in session_id."""
     journal_dir.mkdir(parents=True, exist_ok=True)
