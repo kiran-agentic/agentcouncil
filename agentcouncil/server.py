@@ -916,6 +916,68 @@ async def protocol_resume_tool(
     return result.model_dump()
 
 
+@mcp.tool(name="review_loop")
+async def review_loop_tool(
+    artifact: str,
+    artifact_type: str = "code",
+    review_objective: str | None = None,
+    focus_areas: list[str] | None = None,
+    max_iterations: int = 3,
+    backend: str | None = None,
+) -> dict:
+    """Run an iterative review convergence loop (CL-01).
+
+    Reviews the artifact, tracks findings, and loops through fix/re-review
+    cycles until all findings are verified or max iterations reached.
+
+    Args:
+        artifact: Text content to review.
+        artifact_type: Type (code, design, plan, document, other).
+        review_objective: Optional review focus.
+        focus_areas: Optional specific areas.
+        max_iterations: Maximum iterations (default 3, hard cap 10).
+        backend: Backend profile for the outside reviewer.
+    """
+    import time as _time
+
+    from agentcouncil.convergence import review_loop
+
+    lead = ClaudeAdapter(model="opus", timeout=300)
+
+    try:
+        provider = _make_provider(profile=backend)
+        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        session = OutsideSession(provider, runtime, profile=backend)
+        await session.open()
+        try:
+            outside = OutsideSessionAdapter(session)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+            )
+        finally:
+            await provider.close()
+            await session.close()
+    except ValueError:
+        outside = resolve_outside_adapter(backend, timeout=300)
+        result = await review_loop(
+            artifact=artifact,
+            artifact_type=artifact_type,
+            outside_adapter=outside,
+            lead_adapter=lead,
+            review_objective=review_objective,
+            focus_areas=focus_areas,
+            max_iterations=max_iterations,
+        )
+
+    return result.model_dump()
+
+
 @mcp.tool(name="journal_stream")
 def journal_stream_tool(
     session_id: str,

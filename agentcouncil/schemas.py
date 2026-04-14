@@ -25,6 +25,10 @@ __all__ = [
     "FailureMode",
     "ChallengeArtifact",
     "JournalEntry",
+    "FindingStatus",
+    "FindingIteration",
+    "ConvergenceIteration",
+    "ConvergenceResult",
 ]
 
 
@@ -360,3 +364,48 @@ class JournalEntry(BaseModel):
     state: Optional[dict] = None
 
     model_config = {"use_enum_values": True}
+
+
+# ---------------------------------------------------------------------------
+# Convergence Loop models (CL-03, CL-07, CL-08)
+# ---------------------------------------------------------------------------
+
+
+class FindingStatus(str, Enum):
+    """Per-finding status in a convergence loop (CL-03)."""
+
+    open = "open"
+    fixed = "fixed"
+    verified = "verified"
+    reopened = "reopened"
+    wont_fix = "wont_fix"
+
+
+class FindingIteration(BaseModel):
+    """Status of a single finding within one convergence iteration."""
+
+    finding_id: str
+    status: FindingStatus
+    addressed_change: Optional[str] = None
+    wont_fix_rationale: Optional[str] = None
+    reviewer_notes: Optional[str] = None
+
+    model_config = {"use_enum_values": True}
+
+
+class ConvergenceIteration(BaseModel):
+    """One iteration of a convergence loop (CL-07)."""
+
+    iteration: int
+    findings: list[FindingIteration] = Field(default_factory=list)
+    approved: bool = False
+
+
+class ConvergenceResult(BaseModel):
+    """Final result of a convergence loop (CL-08)."""
+
+    iterations: list[ConvergenceIteration] = Field(default_factory=list)
+    final_findings: list[Finding] = Field(default_factory=list)
+    total_iterations: int
+    exit_reason: Literal["all_verified", "max_iterations", "approved"]
+    final_verdict: Literal["pass", "revise", "escalate"]
