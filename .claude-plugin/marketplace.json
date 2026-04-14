@@ -7,8 +7,8 @@
   "plugins": [
     {
       "name": "agentcouncil",
-      "version": "0.1.0",
-      "description": "Brainstorm, review, decide, and challenge protocols with independent agents",
+      "version": "0.2.0",
+      "description": "Brainstorm, review (with --loop convergence), decide, challenge, and inspect protocols with independent agents",
       "source": "./",
       "author": {
         "name": "Kiran Krishna"

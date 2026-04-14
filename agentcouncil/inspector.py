@@ -152,15 +152,15 @@ def inspect_list() -> str:
     if not entries:
         return "No journal entries found."
 
-    lines = ["Session ID                            | Protocol    | Status      | Started"]
-    lines.append("-" * 85)
+    lines = ["Session ID                            | Protocol    | Status      | Title"]
+    lines.append("-" * 100)
 
     for e in entries:
         sid = e["session_id"][:36]
         proto = e["protocol_type"].ljust(11)
         status = str(e["status"]).ljust(11)
-        started = _format_timestamp(e["start_time"])
-        lines.append(f"{sid} | {proto} | {status} | {started}")
+        title = (e.get("title") or "(untitled)")[:40]
+        lines.append(f"{sid} | {proto} | {status} | {title}")
 
     return "\n".join(lines)
 

@@ -357,6 +357,7 @@ class JournalEntry(BaseModel):
 
     schema_version: str = "1.0"
     session_id: str
+    title: Optional[str] = None
     protocol_type: Literal["brainstorm", "review", "decide", "challenge"]
     start_time: float
     end_time: float

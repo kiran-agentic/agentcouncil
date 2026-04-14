@@ -25,9 +25,10 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 |:---|:---|:---|
 | "What should we do?" | `/brainstorm` | Both agents propose independently, then negotiate toward consensus |
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
+| "Fix until clean" | `/review --loop` | Iterative review: findings → fix → re-review → verify until clean |
 | "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
-| "Fix until clean" | `review_loop` tool | Iterative review loop: findings → fix → re-review → verify |
+| "What happened?" | `/inspect` | View past deliberation sessions from the journal |
 
 > **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
 
@@ -116,6 +117,30 @@ cp -r skills/ .claude/skills/
 
 </details>
 
+### Upgrade
+
+**Plugin install (marketplace):**
+
+```
+/plugin update agentcouncil
+/reload-plugins
+```
+
+**Manual install (from source):**
+
+```bash
+git pull
+pip install -e .
+```
+
+If you installed skills manually (`cp -r skills/ .claude/skills/`), re-copy them to pick up new or updated skills:
+
+```bash
+cp -r skills/ .claude/skills/
+```
+
+No configuration changes or migrations are required between versions. New features (journal, convergence loops, inspector) activate automatically. See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+
 ### Use
 
 ```
@@ -128,19 +153,25 @@ Want more depth? Add rounds, use multiple backends, or run iterative review:
 
 ```
 /brainstorm 4 rounds How should we handle caching for our API?
-/challenge 3 rounds Stress test our deployment plan
+/review --loop Review this code until all findings are fixed
 /brainstorm backends=codex,ollama-local How should we cache?   # Blind Panel: 2 independent proposals
 ```
 
 ### Inspect Past Deliberations
 
-Every protocol run is persisted to a local journal. Inspect past sessions:
+Every protocol run is persisted to a local journal. Use `/inspect` inside Claude Code or the CLI:
+
+```
+/inspect recent                                # List recent sessions
+/inspect <session_id>                          # View a specific session
+```
+
+From the terminal:
 
 ```bash
 agentcouncil inspect --list                    # List recent sessions
 agentcouncil inspect <session_id>              # View formatted transcript
 agentcouncil inspect <session_id> --json       # Raw JSON output
-agentcouncil inspect <session_id> --watch      # Poll for new events (requires event wiring)
 ```
 
 ## How It Works
@@ -228,6 +259,14 @@ Integration tests require `claude` and `codex` CLIs on PATH:
 ```bash
 pytest -m real
 ```
+
+**Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. After modifying or adding skill files, copy them to the cache:
+
+```bash
+cp -r skills/ ~/.claude/plugins/cache/agentcouncil/agentcouncil/*/skills/
+```
+
+Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update` get fresh cache automatically.
 
 </details>
 

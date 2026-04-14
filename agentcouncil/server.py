@@ -968,8 +968,15 @@ def _persist_journal(
         from agentcouncil.schemas import Transcript
 
         transcript = Transcript.model_validate(transcript_data)
+
+        # Extract title from first line of input prompt
+        raw_prompt = transcript_data.get("input_prompt", "") or ""
+        first_line = raw_prompt.strip().split("\n")[0].lstrip("# ").strip()
+        title = first_line[:80] if first_line else None
+
         entry = JournalEntry(
             session_id=session_id or str(uuid.uuid4()),
+            title=title,
             protocol_type=protocol_type,
             start_time=start_time,
             end_time=_time.time(),

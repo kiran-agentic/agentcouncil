@@ -131,6 +131,7 @@ def list_entries(
                 continue
             entries.append({
                 "session_id": data["session_id"],
+                "title": data.get("title"),
                 "protocol_type": data["protocol_type"],
                 "start_time": data["start_time"],
                 "end_time": data["end_time"],

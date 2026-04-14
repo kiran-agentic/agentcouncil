@@ -130,13 +130,22 @@ Claude states assumptions: Redis always available, 60s staleness acceptable, wri
 
 ### Convergence Loops (Iterative Review)
 
-One-shot review finds issues but doesn't verify they're fixed. Convergence loops close that gap:
+One-shot review finds issues but doesn't verify they're fixed. Convergence loops close that gap.
 
+**How to use:**
+```
+/review --loop Review this implementation until all findings are fixed
+/review --converge Check this code and iterate until clean
+```
+
+The `/review` skill detects convergence intent from `--loop`, `--converge`, or phrases like "fix until clean" / "iterate until no findings". After a one-shot review with findings, it also shows a hint: *"To iterate on these findings until clean, run `/review --loop`"*.
+
+**Flow:**
 ```
 [1] Initial review → produces findings with severities
 [2] Lead addresses findings → describes what was changed
 [3] Scoped re-review → checks prior findings + regressions (not full re-review)
-[4] Loop until: all verified, max iterations, or explicit approval
+[4] Loop until: all verified, max iterations (default 3), or explicit approval
 ```
 
 **Per-finding status tracking:** `open` → `fixed` → `verified` (or `reopened`, `wont_fix`).
@@ -177,7 +186,8 @@ A common flow: **brainstorm** (explore approaches) -> **decide** (choose one) ->
 But each works standalone:
 - Got a vague problem? **brainstorm**
 - Got something to check? **review**
+- Want it fixed until clean? **review --loop**
 - Got options to compare? **decide**
 - Got a plan to ship? **challenge**
-- Want iterative review? Use `review_loop` MCP tool
-- Want N perspectives? Use `backends=` with brainstorm
+- Want N perspectives? **brainstorm** with `backends=`
+- Want to look back? **inspect**

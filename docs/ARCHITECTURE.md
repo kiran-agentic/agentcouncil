@@ -133,10 +133,11 @@ agentcouncil/
   inspector.py       # Deliberation Inspector — CLI session viewer
 
 skills/              # Skill definitions (protocol instructions)
-  brainstorm/SKILL.md
-  review/SKILL.md
-  decide/SKILL.md
-  challenge/SKILL.md
+  brainstorm/SKILL.md   # /brainstorm — also supports backends= for Blind Panel
+  review/SKILL.md       # /review — also supports --loop for convergence
+  decide/SKILL.md       # /decide
+  challenge/SKILL.md    # /challenge — also accepts specialist_provider
+  inspect/SKILL.md      # /inspect — journal session viewer (v2.0)
 ```
 
 The skill files are the primary interface. The Python package provides the MCP session tools, the four protocol tools, the journal/inspector tools, and the library-mode engines.

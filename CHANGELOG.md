@@ -10,7 +10,8 @@
 - **Expert Witness (building blocks):** Bounded specialist consultation via `specialist_check()` and `make_specialist_turn()`. Protocol-specific typed output schemas. Advisory evidence with provenance tagging. Not yet automatically invoked during protocol execution — available as library API
 - **Blind Panel:** Sealed N-party proposals via `brainstorm_panel()`. Multiple outside agents propose independently before reveal. Wired to `brainstorm` tool via `backends` parameter
 - **Resumable Protocol State:** Protocol state machine with checkpointing at phase boundaries. Review protocol wired with checkpoint persistence during execution. MCP tool: `protocol_resume`
-- **Deliberation Inspector:** CLI session viewer with `agentcouncil inspect` command. Supports `--list`, `--json`, `--watch` flags
+- **Deliberation Inspector:** CLI session viewer with `agentcouncil inspect` command. Supports `--list`, `--json`, `--watch` flags. New `/inspect` skill for in-session use
+- **Enhanced /review skill:** Supports `--loop` / `--converge` flag for iterative convergence mode. Shows contextual hint after one-shot reviews with findings
 - **Transcript Normalization (partial):** `TranscriptTurn` extended with per-turn provenance fields (actor_id, actor_provider, actor_model, phase, timestamp, parent_turn_id). `BrainstormResult.transcript` migrated from `RoundTranscript` to `Transcript`. Exchange turns populated with provenance. Initial proposals and synthesis remain as top-level `Transcript` fields — full migration to turn-only representation deferred
 
 ### Schema additions
