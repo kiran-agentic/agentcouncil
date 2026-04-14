@@ -669,6 +669,7 @@ async def run_deliberation(
     lead_input_prompt: Optional[str] = None,
     derive_status: Optional[DeriveStatus] = None,
     outside_meta: Optional[TranscriptMeta] = None,
+    checkpoint_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
 ) -> DeliberationResult:
     """Run the dual-independent deliberation protocol and return a structured result.
 
@@ -739,6 +740,14 @@ async def run_deliberation(
         )
     emit("step", {"agent": "lead", "step": "initial", "status": "done"})
 
+    # Checkpoint: both proposals received (RP-02)
+    if checkpoint_callback is not None:
+        checkpoint_callback("proposals_received", {
+            "input_prompt": input_prompt,
+            "outside_initial": outside_initial,
+            "lead_initial": lead_initial,
+        })
+
     # Phase 2: Exchange rounds
     exchanges: List[TranscriptTurn] = []
 
@@ -794,7 +803,21 @@ async def run_deliberation(
         exchanges.append(TranscriptTurn(role="lead", content=lead_response))
         emit("step", {"agent": "lead", "step": f"exchange {round_num + 1}", "status": "done"})
 
+        # Checkpoint: exchange round complete (RP-02)
+        if checkpoint_callback is not None:
+            checkpoint_callback("exchange_complete", {
+                "round": round_num + 1,
+                "exchanges": len(exchanges),
+            })
+
     # Phase 3: Synthesis
+
+    # Checkpoint: before synthesis (RP-02)
+    if checkpoint_callback is not None:
+        checkpoint_callback("before_synthesis", {
+            "exchanges": len(exchanges),
+        })
+
     discussion = _format_exchange_discussion(exchanges)
     schema_json = _generic_filtered_schema(artifact_cls)
     synthesis_prompt = synthesis_prompt_fn(
