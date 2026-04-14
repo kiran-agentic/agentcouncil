@@ -214,6 +214,78 @@ def test_inspect_list_empty(journal_dir):
     assert "no" in output.lower() or len(output) > 0
 
 
+def test_inspector_main_list(journal_dir, capsys):
+    """DI-11: CLI main() --list prints session table."""
+    from agentcouncil.journal import write_entry
+    from agentcouncil.inspector import main
+    import sys
+
+    write_entry(_make_journal_entry(session_id="cli-001"))
+
+    original_argv = sys.argv
+    try:
+        sys.argv = ["agentcouncil", "--list"]
+        main()
+    finally:
+        sys.argv = original_argv
+
+    captured = capsys.readouterr()
+    assert "cli-001" in captured.out
+
+
+def test_inspector_main_json(journal_dir, capsys):
+    """DI-08: CLI main() --json outputs valid JSON."""
+    from agentcouncil.journal import write_entry
+    from agentcouncil.inspector import main
+    import sys
+
+    write_entry(_make_journal_entry(session_id="cli-json-001"))
+
+    original_argv = sys.argv
+    try:
+        sys.argv = ["agentcouncil", "cli-json-001", "--json"]
+        main()
+    finally:
+        sys.argv = original_argv
+
+    captured = capsys.readouterr()
+    parsed = json.loads(captured.out)
+    assert parsed["session_id"] == "cli-json-001"
+
+
+def test_inspector_main_help(capsys):
+    """CLI main() --help prints usage."""
+    from agentcouncil.inspector import main
+    import sys
+
+    original_argv = sys.argv
+    try:
+        sys.argv = ["agentcouncil", "--help"]
+        main()
+    finally:
+        sys.argv = original_argv
+
+    captured = capsys.readouterr()
+    assert "Usage" in captured.out
+
+
+def test_inspector_main_unknown_session(journal_dir, capsys):
+    """DI-10: CLI main() with unknown session shows actionable error."""
+    from agentcouncil.inspector import main
+    import sys
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    original_argv = sys.argv
+    try:
+        sys.argv = ["agentcouncil", "nonexistent-session"]
+        main()
+    finally:
+        sys.argv = original_argv
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out.lower()
+
+
 def test_format_entry_shows_finding_status_progression(journal_dir):
     """DI-04: Finding status progression displayed for convergence entries."""
     from agentcouncil.inspector import format_entry

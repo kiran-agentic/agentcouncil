@@ -362,7 +362,6 @@ def test_checkpoint_review_only_initial():
     """RP-06: Initial implementation targets review protocol."""
     from agentcouncil.workflow import ProtocolCheckpoint, ProtocolPhase
 
-    # Review checkpoint is valid
     cp = ProtocolCheckpoint(
         protocol_type="review",
         current_phase=ProtocolPhase.proposals_received,
@@ -373,3 +372,76 @@ def test_checkpoint_review_only_initial():
         artifact_cls_name="ReviewArtifact",
     )
     assert cp.protocol_type == "review"
+
+
+# ---------------------------------------------------------------------------
+# Error path coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resume_unknown_artifact_class_raises(journal_dir):
+    """resume_protocol raises ValueError for unknown artifact_cls_name."""
+    from agentcouncil.workflow import (
+        ProtocolCheckpoint, ProtocolPhase,
+        save_checkpoint, resume_protocol,
+    )
+    from agentcouncil.journal import write_entry
+    from agentcouncil.schemas import JournalEntry, Transcript
+    from agentcouncil.adapters import StubAdapter
+
+    entry = JournalEntry(
+        session_id="bad-cls-001",
+        protocol_type="review",
+        start_time=100.0, end_time=0.0,
+        status="consensus", artifact={},
+        transcript=Transcript(input_prompt="test"),
+    )
+    write_entry(entry)
+    cp = ProtocolCheckpoint(
+        protocol_type="review",
+        current_phase=ProtocolPhase.before_synthesis,
+        input_prompt="test",
+        exchange_rounds_completed=0,
+        exchange_rounds_total=1,
+        provider_config={},
+        artifact_cls_name="NonExistentArtifact",
+    )
+    save_checkpoint("bad-cls-001", cp)
+
+    with pytest.raises(ValueError, match="unknown artifact class"):
+        await resume_protocol("bad-cls-001", StubAdapter([]), StubAdapter([]))
+
+
+@pytest.mark.asyncio
+async def test_resume_unsupported_protocol_raises(journal_dir):
+    """resume_protocol raises ValueError for unsupported protocol type."""
+    from agentcouncil.workflow import (
+        ProtocolCheckpoint, ProtocolPhase,
+        save_checkpoint, resume_protocol,
+    )
+    from agentcouncil.journal import write_entry
+    from agentcouncil.schemas import JournalEntry, Transcript
+    from agentcouncil.adapters import StubAdapter
+
+    entry = JournalEntry(
+        session_id="bad-proto-001",
+        protocol_type="brainstorm",
+        start_time=100.0, end_time=0.0,
+        status="consensus", artifact={},
+        transcript=Transcript(input_prompt="test"),
+    )
+    write_entry(entry)
+    cp = ProtocolCheckpoint(
+        protocol_type="brainstorm",
+        current_phase=ProtocolPhase.before_synthesis,
+        input_prompt="test",
+        exchange_rounds_completed=0,
+        exchange_rounds_total=1,
+        provider_config={},
+        artifact_cls_name="ReviewArtifact",  # valid class, but unsupported protocol
+    )
+    save_checkpoint("bad-proto-001", cp)
+
+    with pytest.raises(ValueError, match="resume not supported"):
+        await resume_protocol("bad-proto-001", StubAdapter([]), StubAdapter([]))

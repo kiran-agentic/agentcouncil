@@ -230,14 +230,86 @@ def test_journal_entry_provenance_fields(journal_dir):
 
 def test_journal_failure_does_not_crash_protocol():
     """DJ-11: Journal failures must not fail the protocol (non-fatal)."""
-    # This tests that _persist_journal in server.py is wrapped in try/except
-    # We verify by importing the function and confirming it doesn't raise
-    # even with bad input
     from agentcouncil.server import _persist_journal
 
-    # Call with a non-model object — should not raise
     _persist_journal("brainstorm", object(), 0.0)
-    # If we get here, the function handled the error gracefully
+
+
+# ---------------------------------------------------------------------------
+# Security: session_id validation (R-03)
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_session_id_path_traversal(journal_dir):
+    """R-03: session_id with ../ is rejected."""
+    from agentcouncil.journal import read_entry
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ValueError, match="invalid session_id"):
+        read_entry("../../etc/passwd")
+
+
+def test_invalid_session_id_absolute_path(journal_dir):
+    """R-03: Absolute path session_id is rejected."""
+    from agentcouncil.journal import read_entry
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ValueError, match="invalid session_id"):
+        read_entry("/etc/passwd")
+
+
+def test_invalid_session_id_special_chars(journal_dir):
+    """R-03: session_id with special characters is rejected."""
+    from agentcouncil.journal import read_entry, write_entry
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    for bad_id in ["foo bar", "foo;rm", "foo\nbar", "foo/bar", ""]:
+        with pytest.raises(ValueError):
+            read_entry(bad_id)
+
+
+def test_valid_session_id_accepted(journal_dir):
+    """R-03: Valid session_ids with alphanumeric, hyphens, underscores work."""
+    from agentcouncil.journal import write_entry, read_entry
+
+    for valid_id in ["abc-123", "session_001", "a1b2c3", "MY-SESSION"]:
+        write_entry(_make_journal_entry(session_id=valid_id))
+        entry = read_entry(valid_id)
+        assert entry.session_id == valid_id
+
+
+# ---------------------------------------------------------------------------
+# Concurrent append (R-04)
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_append_monotonic_ids(journal_dir):
+    """R-04: Concurrent appends produce monotonic event_ids without duplicates."""
+    import threading
+    from agentcouncil.journal import write_entry, append_event, read_entry
+
+    write_entry(_make_journal_entry(session_id="concurrent-001"))
+
+    errors = []
+
+    def _append(n):
+        try:
+            append_event("concurrent-001", {"event_type": f"event-{n}", "data": {}})
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=_append, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"Errors during concurrent append: {errors}"
+    entry = read_entry("concurrent-001")
+    ids = [e["event_id"] for e in entry.events]
+    assert len(ids) == 5
+    assert ids == sorted(ids)
+    assert len(set(ids)) == 5  # no duplicates
 
 
 # ---------------------------------------------------------------------------

@@ -409,6 +409,75 @@ async def test_lead_cannot_skip_rereview(journal_dir):
     assert len(lead.calls) >= 1
 
 
+@pytest.mark.asyncio
+async def test_convergence_outside_error_during_rereview(journal_dir):
+    """Convergence handles outside AdapterError during re-review gracefully."""
+    from agentcouncil.convergence import review_loop
+    from agentcouncil.adapters import StubAdapter, AdapterError
+
+    review_json = _make_review_json([_make_finding("R-01")])
+
+    class FailOnThirdCall:
+        def __init__(self):
+            self._count = 0
+            self.calls = []
+        def call(self, prompt):
+            self.calls.append(prompt)
+            self._count += 1
+            if self._count <= 2:
+                return ["Outside review", review_json][self._count - 1]
+            raise AdapterError("connection lost")
+        async def acall(self, prompt):
+            return self.call(prompt)
+
+    outside = FailOnThirdCall()
+    lead = StubAdapter(["Lead review", "Lead fix"])
+
+    result = await review_loop(
+        artifact="code", artifact_type="code",
+        outside_adapter=outside, lead_adapter=lead,
+        max_iterations=3,
+    )
+    # Should exit gracefully on error, not crash
+    assert result.exit_reason == "max_iterations"
+    assert result.total_iterations >= 1
+
+
+@pytest.mark.asyncio
+async def test_convergence_lead_error_during_fix(journal_dir):
+    """Convergence handles lead AdapterError during fix gracefully."""
+    from agentcouncil.convergence import review_loop
+    from agentcouncil.adapters import StubAdapter, AdapterError
+
+    review_json = _make_review_json([_make_finding("R-01")])
+    rereview = json.dumps({
+        "findings": [{"finding_id": "R-01", "status": "verified"}],
+        "approved": True,
+    })
+
+    class FailOnSecondCall:
+        def __init__(self):
+            self._count = 0
+        def call(self, prompt):
+            self._count += 1
+            if self._count == 1:
+                return "Lead review"
+            raise AdapterError("lead crashed")
+        async def acall(self, prompt):
+            return self.call(prompt)
+
+    outside = StubAdapter(["Outside review", review_json, "Re-review", rereview])
+    lead = FailOnSecondCall()
+
+    result = await review_loop(
+        artifact="code", artifact_type="code",
+        outside_adapter=outside, lead_adapter=lead,
+        max_iterations=3,
+    )
+    # Should continue despite lead error
+    assert result.total_iterations >= 1
+
+
 def test_rereview_prompt_includes_prior_ids():
     """CL-16: Re-review prompt includes prior finding IDs for reference."""
     from agentcouncil.convergence import _build_rereview_prompt
