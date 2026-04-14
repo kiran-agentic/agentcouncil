@@ -170,7 +170,7 @@ The four deliberation functions are also exposed as MCP tools for library-mode u
 
 | Tool | Purpose |
 |------|---------|
-| `review_loop` | Iterative review: findings → fix → scoped re-review → verify. Exits on all-verified, max iterations, or explicit approval |
+| `review_loop` | Iterative review: findings → describe fix → scoped re-review → verify approach. Exits on all-verified, max iterations, or explicit approval |
 
 ### Journal & Observability Tools
 
@@ -368,7 +368,7 @@ Bounded specialist consultation for protocol sub-questions. The `specialist.py` 
 - Generic over protocol-owned Pydantic artifact types (`ChallengeSpecialistAssessment`, `ReviewSpecialistFinding`, `DecideSpecialistEvaluation`)
 - Output is evaluative, not prescriptive — schemas constrain against solutioning
 - Evidence is advisory — does not alter protocol truth unless adopted in synthesis with citation
-- One check per run by default, caller/protocol-controlled trigger
+- Caller/protocol-controlled trigger
 - Graceful failure — returns `None` on error, protocol continues
 
 > **Note:** The specialist module and schemas are implemented, and `challenge_tool` accepts a `specialist_provider` parameter, but automatic specialist invocation during protocol execution is not yet wired. Callers can use `specialist_check()` directly via the library API. Protocol integration is planned for a future release.
@@ -391,10 +391,10 @@ Partial panel on failure: if one agent fails, the panel continues with remaining
 CLI viewer for persisted journal entries:
 
 ```bash
-agentcouncil inspect <session_id>        # Formatted transcript with provenance
-agentcouncil inspect --list              # Recent sessions
-agentcouncil inspect <session_id> --json # Raw JSON
-agentcouncil inspect <session_id> --watch # Poll for new events (requires event wiring)
+agentcouncil <session_id>                # Formatted transcript with provenance
+agentcouncil --list                      # Recent sessions
+agentcouncil <session_id> --json         # Raw JSON
+agentcouncil <session_id> --watch        # Poll for new events (requires event wiring)
 ```
 
 Renders protocol type, status, turns with actor identity/provider/model/phase/timestamp, independence markers, finding status progression, specialist evidence, and synthesis results.

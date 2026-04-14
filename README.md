@@ -25,7 +25,7 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 |:---|:---|:---|
 | "What should we do?" | `/brainstorm` | Both agents propose independently, then negotiate toward consensus |
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
-| "Fix until clean" | `/review --loop` | Iterative review: findings → fix → re-review → verify until clean |
+| "Review iteratively" | `/review --loop` | Iterative review: findings → describe fix → re-review → verify |
 | "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
 | "What happened?" | `/inspect` | View past deliberation sessions from the journal |
@@ -166,12 +166,12 @@ Every protocol run is persisted to a local journal. Use `/inspect` inside Claude
 /inspect <session_id>                          # View a specific session
 ```
 
-From the terminal:
+From the terminal (after `pip install`):
 
 ```bash
-agentcouncil inspect --list                    # List recent sessions
-agentcouncil inspect <session_id>              # View formatted transcript
-agentcouncil inspect <session_id> --json       # Raw JSON output
+agentcouncil --list                            # List recent sessions
+agentcouncil <session_id>                      # View formatted transcript
+agentcouncil <session_id> --json               # Raw JSON output
 ```
 
 ## How It Works
@@ -278,7 +278,6 @@ Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update
 | [BACKENDS.md](docs/BACKENDS.md) | Backend selection and independence tiers |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical design for contributors |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | How to contribute |
-| [SPEC.md](SPEC.md) | v2.0 Deliberation Infrastructure spec (94 acceptance criteria) |
 
 ## License
 

@@ -6,11 +6,11 @@
 
 - **Deliberation Journal:** Every protocol run auto-persists to `~/.agentcouncil/journal/` with atomic writes, schema versioning, and per-turn provenance. MCP tools: `journal_list`, `journal_get`
 - **Turn Stream:** Append-only event log with cursor-based retrieval via `journal_stream` tool. File-locked appends prevent concurrent write races
-- **Convergence Loops:** Iterative review workflow — findings → fix → scoped re-review → verify resolution. Per-finding status tracking (open/fixed/verified/reopened/wont_fix). MCP tool: `review_loop`
+- **Convergence Loops:** Iterative review workflow — findings → describe fix → scoped re-review → verify approach. Per-finding status tracking (open/fixed/verified/reopened/wont_fix). MCP tool: `review_loop`
 - **Expert Witness (building blocks):** Bounded specialist consultation via `specialist_check()` and `make_specialist_turn()`. Protocol-specific typed output schemas. Advisory evidence with provenance tagging. Not yet automatically invoked during protocol execution — available as library API
 - **Blind Panel:** Sealed N-party proposals via `brainstorm_panel()`. Multiple outside agents propose independently before reveal. Wired to `brainstorm` tool via `backends` parameter
 - **Resumable Protocol State:** Protocol state machine with checkpointing at phase boundaries. Review protocol wired with checkpoint persistence during execution. MCP tool: `protocol_resume`
-- **Deliberation Inspector:** CLI session viewer with `agentcouncil inspect` command. Supports `--list`, `--json`, `--watch` flags. New `/inspect` skill for in-session use
+- **Deliberation Inspector:** CLI session viewer (`agentcouncil <session_id>`, `agentcouncil --list`, `--json`). New `/inspect` skill for in-session use
 - **Enhanced /review skill:** Supports `--loop` / `--converge` flag for iterative convergence mode. Shows contextual hint after one-shot reviews with findings
 - **Transcript Normalization (partial):** `TranscriptTurn` extended with per-turn provenance fields (actor_id, actor_provider, actor_model, phase, timestamp, parent_turn_id). `BrainstormResult.transcript` migrated from `RoundTranscript` to `Transcript`. Exchange turns populated with provenance. Initial proposals and synthesis remain as top-level `Transcript` fields — full migration to turn-only representation deferred
 
@@ -21,6 +21,17 @@
 - `FindingStatus`, `FindingIteration`, `ConvergenceIteration`, `ConvergenceResult` for convergence loops
 - `ChallengeSpecialistAssessment`, `ReviewSpecialistFinding`, `DecideSpecialistEvaluation` for specialist checks
 - `ProtocolPhase`, `ProtocolCheckpoint` for resumable state
+
+### Breaking Changes
+
+- **`BrainstormResult.transcript` type changed from `RoundTranscript` to `Transcript`.** Code accessing `.brief_prompt`, `.outside_proposal`, `.lead_proposal`, or `.negotiation_output` must migrate to `.input_prompt`, `.outside_initial`, `.lead_initial`, and `.final_output` respectively. `RoundTranscript` is still importable but deprecated.
+
+### Known Limitations
+
+- **Convergence loops evaluate described changes, not actual file modifications.** The lead describes how it would fix findings; the re-review evaluates those descriptions against the original artifact. Actual file changes between iterations are not supported in the current MCP-based workflow.
+- **Journal persistence overwrites prior checkpoint state.** Final `_persist_journal` call replaces the entry rather than merging, so mid-run checkpoints and events may be lost. Resume from `exchange_complete` phase restarts rather than continuing.
+- **Turn Stream events are not automatically emitted during protocol execution.** `append_event()` exists as API but protocol engines don't call it yet.
+- **Expert Witness `specialist_provider` parameter is accepted but not automatically invoked.** Use `specialist_check()` directly via the library API.
 
 ### Security
 

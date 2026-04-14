@@ -143,10 +143,12 @@ The `/review` skill detects convergence intent from `--loop`, `--converge`, or p
 **Flow:**
 ```
 [1] Initial review → produces findings with severities
-[2] Lead addresses findings → describes what was changed
-[3] Scoped re-review → checks prior findings + regressions (not full re-review)
+[2] Lead describes how it would address each finding
+[3] Scoped re-review → evaluates whether described changes resolve prior findings
 [4] Loop until: all verified, max iterations (default 3), or explicit approval
 ```
+
+> **Note:** The current implementation evaluates described changes against the original artifact — it does not modify files between iterations. The convergence loop verifies that the lead's proposed approach addresses findings, not that code was physically changed.
 
 **Per-finding status tracking:** `open` → `fixed` → `verified` (or `reopened`, `wont_fix`).
 
@@ -175,7 +177,6 @@ When a deliberation surfaces a sub-question neither agent can evaluate well, the
 - Receives only the targeted sub-question + minimal context (never the full debate)
 - Returns typed evaluative output aligned to the parent protocol
 - Evidence is advisory — must be cited in synthesis if used, but is not binding
-- One check per protocol run by default
 
 > **Status:** The `specialist_check()` function and typed schemas are implemented. Protocol-level integration (automatic invocation during challenge/review) is planned for a future release. The `challenge` tool accepts `specialist_provider` but does not yet invoke it automatically.
 
