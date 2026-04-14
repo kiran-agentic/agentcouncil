@@ -285,12 +285,32 @@ async def test_review_checkpoint_resume_e2e_workflow(journal_dir, monkeypatch):
     assert entry.protocol_type == "review"
     assert entry.transcript.input_prompt is not None
 
-    # Step 4: If checkpoint state exists, verify it has proposals
+    # Step 4: Verify checkpoint state has merged proposals
     if entry.state is not None:
-        cp = load_checkpoint(session_id)
-        # Checkpoint should have input_prompt from the proposals_received phase
+        from agentcouncil.workflow import ProtocolCheckpoint
+        cp = ProtocolCheckpoint.model_validate(entry.state)
         assert cp.input_prompt, "Checkpoint missing input_prompt after review"
         assert cp.artifact_cls_name == "ReviewArtifact"
+
+        # Step 5: Prove resume_protocol can consume the persisted state
+        # Manually set checkpoint to before_synthesis so resume has work to do
+        from agentcouncil.workflow import ProtocolPhase, save_checkpoint
+        cp_resume = cp.model_copy(update={
+            "current_phase": ProtocolPhase.before_synthesis,
+            "outside_initial": cp.outside_initial or "Outside review",
+            "lead_initial": cp.lead_initial or "Lead review",
+        })
+        save_checkpoint(session_id, cp_resume)
+
+        # Resume via resume_protocol — should succeed and return ReviewArtifact
+        from agentcouncil.workflow import resume_protocol
+        resume_outside = StubAdapter([review_json])
+        resume_lead = StubAdapter([])
+        resumed = await resume_protocol(session_id, resume_outside, resume_lead)
+
+        assert resumed is not None
+        assert resumed.artifact.verdict == "pass"
+        assert resumed.transcript.input_prompt is not None
 
 
 @pytest.mark.asyncio
