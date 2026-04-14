@@ -197,3 +197,86 @@ def test_journal_entry_required_fields():
     assert entry.status is not None
     assert entry.artifact is not None
     assert entry.transcript is not None
+
+
+# ---------------------------------------------------------------------------
+# TS: Turn Stream — Cursor-Based Event Retrieval
+# ---------------------------------------------------------------------------
+
+
+def test_append_event(journal_dir):
+    """TS-01, TS-09: Events can be appended to journal entries during execution."""
+    from agentcouncil.journal import write_entry, append_event, read_entry
+
+    write_entry(_make_journal_entry(session_id="ev-001"))
+    append_event("ev-001", {
+        "event_type": "turn_added",
+        "data": {"role": "outside", "phase": "proposal"},
+    })
+
+    entry = read_entry("ev-001")
+    assert len(entry.events) == 1
+    assert entry.events[0]["event_type"] == "turn_added"
+    assert entry.events[0]["event_id"] == 1
+
+
+def test_append_multiple_events_monotonic(journal_dir):
+    """TS-03, TS-07: Event IDs are monotonic integers."""
+    from agentcouncil.journal import write_entry, append_event, read_entry
+
+    write_entry(_make_journal_entry(session_id="ev-002"))
+    append_event("ev-002", {"event_type": "turn_added", "data": {}})
+    append_event("ev-002", {"event_type": "phase_transition", "data": {}})
+    append_event("ev-002", {"event_type": "status_change", "data": {}})
+
+    entry = read_entry("ev-002")
+    assert len(entry.events) == 3
+    ids = [e["event_id"] for e in entry.events]
+    assert ids == [1, 2, 3]
+
+
+def test_stream_events_all(journal_dir):
+    """TS-05: stream_events with no cursor returns all events."""
+    from agentcouncil.journal import write_entry, append_event, stream_events
+
+    write_entry(_make_journal_entry(session_id="ev-003"))
+    append_event("ev-003", {"event_type": "turn_added", "data": {}})
+    append_event("ev-003", {"event_type": "phase_transition", "data": {}})
+
+    result = stream_events("ev-003")
+    assert len(result["events"]) == 2
+    assert result["next_cursor"] == 2
+
+
+def test_stream_events_since_cursor(journal_dir):
+    """TS-04, TS-07: stream_events with since_cursor filters correctly."""
+    from agentcouncil.journal import write_entry, append_event, stream_events
+
+    write_entry(_make_journal_entry(session_id="ev-004"))
+    append_event("ev-004", {"event_type": "turn_added", "data": {}})
+    append_event("ev-004", {"event_type": "phase_transition", "data": {}})
+    append_event("ev-004", {"event_type": "status_change", "data": {}})
+
+    result = stream_events("ev-004", since_cursor=1)
+    assert len(result["events"]) == 2
+    assert result["events"][0]["event_id"] == 2
+    assert result["next_cursor"] == 3
+
+
+def test_stream_events_unknown_session_raises(journal_dir):
+    """TS-08: stream_events on unknown session raises ValueError."""
+    from agentcouncil.journal import stream_events
+
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ValueError):
+        stream_events("nonexistent")
+
+
+def test_stream_events_empty(journal_dir):
+    """TS-05: stream_events with no events returns empty list."""
+    from agentcouncil.journal import write_entry, stream_events
+
+    write_entry(_make_journal_entry(session_id="ev-005"))
+    result = stream_events("ev-005")
+    assert result["events"] == []
+    assert result["next_cursor"] == 0

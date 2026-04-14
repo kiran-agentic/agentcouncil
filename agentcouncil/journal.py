@@ -17,7 +17,11 @@ from typing import Optional
 
 from agentcouncil.schemas import JournalEntry
 
-__all__ = ["JournalEntry", "JOURNAL_DIR", "write_entry", "read_entry", "list_entries"]
+__all__ = [
+    "JournalEntry", "JOURNAL_DIR",
+    "write_entry", "read_entry", "list_entries",
+    "append_event", "stream_events",
+]
 
 log = logging.getLogger("agentcouncil.journal")
 
@@ -121,3 +125,67 @@ def list_entries(
     # Sort by start_time descending (DJ-07)
     entries.sort(key=lambda e: e["start_time"], reverse=True)
     return entries[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Turn Stream: append-only event log with cursor-based retrieval (TS-01..TS-09)
+# ---------------------------------------------------------------------------
+
+
+def append_event(session_id: str, event: dict) -> None:
+    """Append an event to a journal entry's event log (TS-01, TS-09).
+
+    Assigns a monotonic event_id and timestamp automatically.
+
+    Args:
+        session_id: Journal session to append to.
+        event: Dict with at minimum event_type and data fields.
+
+    Raises:
+        ValueError: If session_id is unknown.
+    """
+    import time as _time
+
+    entry = read_entry(session_id)
+
+    # Assign monotonic event_id (TS-03, TS-07)
+    next_id = len(entry.events) + 1
+    event_record = {
+        "event_id": next_id,
+        "event_type": event.get("event_type", "unknown"),
+        "timestamp": _time.time(),
+        "data": event.get("data", {}),
+    }
+    entry.events.append(event_record)
+    write_entry(entry)
+
+
+def stream_events(
+    session_id: str,
+    since_cursor: Optional[int] = None,
+) -> dict:
+    """Retrieve events from a journal entry with cursor-based pagination (TS-04).
+
+    Read-only and side-effect-free (TS-06).
+
+    Args:
+        session_id: Journal session to read from.
+        since_cursor: Return events with event_id > since_cursor.
+            When None, returns all events (TS-05).
+
+    Returns:
+        Dict with 'events' (list) and 'next_cursor' (int).
+
+    Raises:
+        ValueError: If session_id is unknown (TS-08).
+    """
+    entry = read_entry(session_id)
+
+    if since_cursor is None:
+        events = entry.events
+    else:
+        events = [e for e in entry.events if e.get("event_id", 0) > since_cursor]
+
+    next_cursor = events[-1]["event_id"] if events else (since_cursor or 0)
+
+    return {"events": events, "next_cursor": next_cursor}

@@ -916,6 +916,27 @@ async def protocol_resume_tool(
     return result.model_dump()
 
 
+@mcp.tool(name="journal_stream")
+def journal_stream_tool(
+    session_id: str,
+    since_cursor: int | None = None,
+) -> dict:
+    """Stream events from a journal entry with cursor-based retrieval.
+
+    Read-only. Returns events since the given cursor position.
+
+    Args:
+        session_id: UUID string of the session.
+        since_cursor: Return events after this cursor. Omit for all events.
+
+    Returns:
+        Dict with 'events' (list) and 'next_cursor' (int).
+    """
+    from agentcouncil.journal import stream_events
+
+    return stream_events(session_id, since_cursor=since_cursor)
+
+
 @mcp.tool(name="journal_list")
 def journal_list_tool(
     limit: int = 20,
