@@ -29,6 +29,9 @@ __all__ = [
     "FindingIteration",
     "ConvergenceIteration",
     "ConvergenceResult",
+    "ChallengeSpecialistAssessment",
+    "ReviewSpecialistFinding",
+    "DecideSpecialistEvaluation",
 ]
 
 
@@ -409,3 +412,35 @@ class ConvergenceResult(BaseModel):
     total_iterations: int
     exit_reason: Literal["all_verified", "max_iterations", "approved"]
     final_verdict: Literal["pass", "revise", "escalate"]
+
+
+# ---------------------------------------------------------------------------
+# Expert Witness specialist schemas (EW-06)
+# ---------------------------------------------------------------------------
+
+
+class ChallengeSpecialistAssessment(BaseModel):
+    """Specialist output for challenge protocol (EW-06, EW-07)."""
+
+    assumption: str
+    validity: Literal["valid", "questionable", "invalid"]
+    evidence: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class ReviewSpecialistFinding(BaseModel):
+    """Specialist output for review protocol (EW-06, EW-07)."""
+
+    area: str
+    severity: Literal["critical", "high", "medium", "low"]
+    evidence: str
+    affected_scope: str
+
+
+class DecideSpecialistEvaluation(BaseModel):
+    """Specialist output for decide protocol (EW-06, EW-07)."""
+
+    option_id: str
+    criterion: str
+    score: Literal["strong", "adequate", "weak"]
+    rationale: str
