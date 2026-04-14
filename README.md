@@ -33,6 +33,7 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 ### Prerequisites
 
 1. [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the host environment
+2. macOS or Linux (Windows support planned for a future release)
 
 That's all you need. Claude is the default outside agent backend — it's already available inside Claude Code with zero configuration.
 
@@ -62,6 +63,55 @@ Add the plugin from the marketplace, then install it:
 /plugin marketplace add kiran-agentic/agentcouncil
 /plugin install agentcouncil@agentcouncil
 ```
+
+<details>
+<summary><strong>Alternative: manual install from source</strong></summary>
+
+If you prefer to install from source instead of the plugin marketplace:
+
+```bash
+git clone https://github.com/kiran-agentic/agentcouncil.git
+cd agentcouncil
+```
+
+Then register the MCP server in your Claude Code project settings (`.claude/settings.json`). If you have `uv` installed (recommended, handles dependencies automatically):
+
+```json
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/agentcouncil", "python", "-m", "agentcouncil.server"]
+    }
+  }
+}
+```
+
+Or with a virtual environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+```json
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "/path/to/agentcouncil/.venv/bin/python3",
+      "args": ["-m", "agentcouncil.server"]
+    }
+  }
+}
+```
+
+And copy the skill files so Claude Code can find them:
+
+```bash
+cp -r skills/ .claude/skills/
+```
+
+</details>
 
 ### Use
 
