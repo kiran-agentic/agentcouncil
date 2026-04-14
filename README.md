@@ -33,6 +33,7 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 ### Prerequisites
 
 1. [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the host environment
+2. macOS or Linux (Windows support planned for a future release)
 
 That's all you need. Claude is the default outside agent backend — it's already available inside Claude Code with zero configuration.
 
