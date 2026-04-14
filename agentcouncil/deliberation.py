@@ -22,7 +22,7 @@ from agentcouncil.schemas import (
 
 T = TypeVar("T", bound=BaseModel)
 
-__all__ = ["Exchange", "RoundTranscript", "BrainstormResult", "brainstorm", "run_deliberation", "DeriveStatus"]
+__all__ = ["Exchange", "RoundTranscript", "BrainstormResult", "brainstorm", "brainstorm_panel", "run_deliberation", "DeriveStatus"]
 
 log = logging.getLogger("agentcouncil.deliberation")
 
@@ -471,6 +471,191 @@ async def brainstorm(
         lead_initial=lead_proposal,
         exchanges=exchanges,
         final_output=negotiation_output,
+        meta=outside_meta,
+    )
+    return BrainstormResult(artifact=artifact, transcript=transcript)
+
+
+# ---------------------------------------------------------------------------
+# Blind Panel — Sealed N-Party Proposals (BP-01..BP-14)
+# ---------------------------------------------------------------------------
+
+PANEL_SYNTHESIS_TEMPLATE = """\
+You are synthesizing multiple independent proposals for the same problem.
+Each proposal was written without seeing the others (sealed independence).
+
+## Problem Brief
+{brief_prompt}
+
+## Proposals
+{proposals_text}
+
+## Lead Agent's Proposal
+{lead_proposal}
+
+Synthesize all proposals into a final consensus. Identify agreement points,
+disagreement points, and rejected alternatives across ALL proposals.
+
+Return your response as JSON matching this schema:
+{schema}"""
+
+
+async def brainstorm_panel(
+    brief: Brief,
+    outside_adapters: List[AgentAdapter],
+    lead_adapter: AgentAdapter,
+    synthesizer_adapter: AgentAdapter,
+    outside_labels: Optional[List[str]] = None,
+    on_event: Optional[OnEvent] = None,
+    outside_meta: Optional[TranscriptMeta] = None,
+) -> BrainstormResult:
+    """Run sealed N-party brainstorm (BP-01..BP-14).
+
+    Each outside agent receives the same brief and proposes independently.
+    All proposals are collected before reveal. Synthesis handles N+1 proposals.
+
+    Args:
+        brief: The problem brief.
+        outside_adapters: List of AgentAdapters for outside agents (max 5, BP-06).
+        lead_adapter: AgentAdapter for the lead agent.
+        synthesizer_adapter: AgentAdapter for synthesis.
+        outside_labels: Optional labels for each outside agent (for provenance).
+        on_event: Optional event callback.
+        outside_meta: Optional provenance metadata.
+
+    Returns:
+        BrainstormResult with all proposals in transcript.
+
+    Raises:
+        ValueError: If more than 5 outside agents (BP-06).
+    """
+    import asyncio
+
+    emit = on_event or _noop_event
+
+    # BP-06: Max agents cap
+    if len(outside_adapters) > 5:
+        raise ValueError(f"Blind Panel maximum 5 outside agents, got {len(outside_adapters)}")
+
+    if not outside_adapters:
+        raise ValueError("Blind Panel requires at least 1 outside agent")
+
+    labels = outside_labels or [f"agent-{i+1}" for i in range(len(outside_adapters))]
+    brief_prompt = brief.to_prompt()
+
+    emit("start", {"panel_size": len(outside_adapters)})
+
+    # BP-02, BP-03: Collect all proposals in parallel (sealed)
+    async def _get_proposal(adapter, label):
+        try:
+            return label, await adapter.acall(brief_prompt)
+        except Exception as e:
+            log.warning("panel agent %s failed: %s", label, e)
+            return label, None
+
+    tasks = [_get_proposal(a, l) for a, l in zip(outside_adapters, labels)]
+    raw_results = await asyncio.gather(*tasks)
+
+    # BP-14: Filter out failures, continue if N-1 >= 1
+    proposals = [(label, text) for label, text in raw_results if text is not None]
+    if not proposals:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error="All panel agents failed",
+            stage="panel",
+            outside_meta=outside_meta,
+        )
+
+    emit("step", {"step": "proposals_collected", "count": len(proposals)})
+
+    # Get lead proposal
+    try:
+        lead_proposal = await lead_adapter.acall(brief_prompt)
+    except AdapterError as e:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error=str(e),
+            stage="lead",
+            outside_meta=outside_meta,
+        )
+
+    # Build proposal turns with provenance (BP-05)
+    exchange_turns: List[TranscriptTurn] = []
+    for label, text in proposals:
+        exchange_turns.append(TranscriptTurn(
+            role="outside",
+            content=text,
+            phase="proposal",
+            actor_id=label,
+            actor_provider=label,
+            timestamp=time.time(),
+        ))
+    exchange_turns.append(TranscriptTurn(
+        role="lead",
+        content=lead_proposal,
+        phase="proposal",
+        actor_id="lead",
+        timestamp=time.time(),
+    ))
+
+    # BP-04: N+1 synthesis
+    proposals_text = "\n\n".join(
+        f"### Proposal from {label}\n{text}" for label, text in proposals
+    )
+    schema = _filtered_schema()
+    synthesis_prompt = PANEL_SYNTHESIS_TEMPLATE.format(
+        brief_prompt=brief_prompt,
+        proposals_text=proposals_text,
+        lead_proposal=lead_proposal,
+        schema=schema,
+    )
+
+    emit("step", {"step": "synthesize", "status": "active"})
+    try:
+        synthesis_output = await synthesizer_adapter.acall(synthesis_prompt)
+    except AdapterError as e:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error=str(e),
+            stage="synthesis",
+            outside_proposal=proposals[0][1] if proposals else None,
+            lead_proposal=lead_proposal,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    # Parse synthesis
+    synthesis_json = _strip_code_fences(synthesis_output)
+    try:
+        artifact = ConsensusArtifact.model_validate_json(synthesis_json)
+    except (ValidationError, json.JSONDecodeError, ValueError):
+        return _unresolved_disagreement_result(
+            brief_prompt=brief_prompt,
+            outside_proposal=proposals[0][1] if proposals else "",
+            lead_proposal=lead_proposal,
+            negotiation_output=synthesis_output,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    if artifact.status == ConsensusStatus.partial_failure:
+        return _unresolved_disagreement_result(
+            brief_prompt=brief_prompt,
+            outside_proposal=proposals[0][1] if proposals else "",
+            lead_proposal=lead_proposal,
+            negotiation_output=synthesis_output,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    emit("done", {"status": artifact.status})
+
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=proposals[0][1] if proposals else None,
+        lead_initial=lead_proposal,
+        exchanges=exchange_turns,
+        final_output=synthesis_output,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
