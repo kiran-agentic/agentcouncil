@@ -130,6 +130,7 @@ async def review(
     lead_adapter: AgentAdapter,
     on_event: Optional[OnEvent] = None,
     outside_meta: Optional[TranscriptMeta] = None,
+    checkpoint_callback: Optional[OnEvent] = None,
 ) -> DeliberationResult:
     """Run the review deliberation protocol.
 
@@ -164,6 +165,7 @@ async def review(
         on_event=on_event,
         derive_status=_review_derive_status,
         outside_meta=outside_meta,
+        checkpoint_callback=checkpoint_callback,
     )
 
 

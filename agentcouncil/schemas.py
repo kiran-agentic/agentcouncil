@@ -9,6 +9,7 @@ __all__ = [
     "ConsensusStatus",
     "ConsensusArtifact",
     "SourceRef",
+    "TurnPhase",
     "TranscriptTurn",
     "TranscriptMeta",
     "Transcript",
@@ -23,6 +24,14 @@ __all__ = [
     "ChallengeInput",
     "FailureMode",
     "ChallengeArtifact",
+    "JournalEntry",
+    "FindingStatus",
+    "FindingIteration",
+    "ConvergenceIteration",
+    "ConvergenceResult",
+    "ChallengeSpecialistAssessment",
+    "ReviewSpecialistFinding",
+    "DecideSpecialistEvaluation",
 ]
 
 
@@ -52,6 +61,10 @@ class ConsensusArtifact(BaseModel):
 T = TypeVar("T", bound=BaseModel)
 
 
+# TN-03: Phase labels for transcript turns
+TurnPhase = Literal["brief", "proposal", "exchange", "synthesis", "specialist", "convergence"]
+
+
 class SourceRef(BaseModel):
     """Reference to a source document, file, or URL."""
 
@@ -66,10 +79,22 @@ class TranscriptTurn(BaseModel):
     role: str  # "outside", "lead", "director"
     content: str
     source_refs: list[SourceRef] = Field(default_factory=list)
+    # TN-02: Turn-level provenance fields (all Optional for backward compat)
+    actor_id: Optional[str] = None
+    actor_provider: Optional[str] = None
+    actor_model: Optional[str] = None
+    phase: Optional[TurnPhase] = None
+    timestamp: Optional[float] = None
+    parent_turn_id: Optional[str] = None
 
 
 class TranscriptMeta(BaseModel):
-    """Backend provenance metadata for a deliberation run."""
+    """Backend provenance metadata for a deliberation run.
+
+    Deprecated: Envelope-level provenance is superseded by per-turn provenance
+    fields on TranscriptTurn (TN-02). This class remains for backward
+    compatibility but new code should use turn-level provenance instead.
+    """
 
     lead_backend: Optional[str] = None
     lead_model: Optional[str] = None
@@ -320,3 +345,103 @@ class ChallengeArtifact(BaseModel):
                 "failure_mode with disposition='must_harden'"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Journal persistence models (DJ-02, DJ-04)
+# ---------------------------------------------------------------------------
+
+
+class JournalEntry(BaseModel):
+    """A persisted record of a completed deliberation protocol run."""
+
+    schema_version: str = "1.0"
+    session_id: str
+    title: Optional[str] = None
+    protocol_type: Literal["brainstorm", "review", "decide", "challenge"]
+    start_time: float
+    end_time: float
+    status: ConsensusStatus
+    artifact: dict  # serialized protocol-specific artifact
+    transcript: Transcript
+    events: list[dict] = Field(default_factory=list)
+    state: Optional[dict] = None
+
+    model_config = {"use_enum_values": True}
+
+
+# ---------------------------------------------------------------------------
+# Convergence Loop models (CL-03, CL-07, CL-08)
+# ---------------------------------------------------------------------------
+
+
+class FindingStatus(str, Enum):
+    """Per-finding status in a convergence loop (CL-03)."""
+
+    open = "open"
+    fixed = "fixed"
+    verified = "verified"
+    reopened = "reopened"
+    wont_fix = "wont_fix"
+
+
+class FindingIteration(BaseModel):
+    """Status of a single finding within one convergence iteration."""
+
+    finding_id: str
+    status: FindingStatus
+    addressed_change: Optional[str] = None
+    wont_fix_rationale: Optional[str] = None
+    reviewer_notes: Optional[str] = None
+
+    model_config = {"use_enum_values": True}
+
+
+class ConvergenceIteration(BaseModel):
+    """One iteration of a convergence loop (CL-07)."""
+
+    iteration: int
+    findings: list[FindingIteration] = Field(default_factory=list)
+    approved: bool = False
+
+
+class ConvergenceResult(BaseModel):
+    """Final result of a convergence loop (CL-08)."""
+
+    iterations: list[ConvergenceIteration] = Field(default_factory=list)
+    final_findings: list[Finding] = Field(default_factory=list)
+    total_iterations: int
+    exit_reason: Literal["all_verified", "max_iterations", "approved"]
+    final_verdict: Literal["pass", "revise", "escalate"]
+
+
+# ---------------------------------------------------------------------------
+# Expert Witness specialist schemas (EW-06)
+# ---------------------------------------------------------------------------
+
+
+class ChallengeSpecialistAssessment(BaseModel):
+    """Specialist output for challenge protocol (EW-06, EW-07)."""
+
+    assumption: str
+    validity: Literal["valid", "questionable", "invalid"]
+    evidence: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class ReviewSpecialistFinding(BaseModel):
+    """Specialist output for review protocol (EW-06, EW-07)."""
+
+    area: str
+    severity: Literal["critical", "high", "medium", "low"]
+    evidence: str
+    affected_scope: str
+
+
+class DecideSpecialistEvaluation(BaseModel):
+    """Specialist output for decide protocol (EW-06, EW-07)."""
+
+    option_id: str
+    criterion: str
+    score: Literal["strong", "adequate", "weak"]
+    rationale: str

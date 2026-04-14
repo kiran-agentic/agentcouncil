@@ -1,6 +1,6 @@
 [project]
 name = "agentcouncil"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-agent deliberation protocols for AI coding assistants. Independence before convergence."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -46,6 +46,9 @@ bedrock = [
 all-backends = [
     "agentcouncil[ollama,openrouter,bedrock]",
 ]
+
+[project.scripts]
+agentcouncil = "agentcouncil.inspector:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]

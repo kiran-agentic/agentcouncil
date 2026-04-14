@@ -443,8 +443,8 @@ def test_existing_consensus_artifact_unchanged():
 
 def test_existing_brainstorm_result_unchanged():
     """BrainstormResult import and instantiation still works."""
-    from agentcouncil.deliberation import BrainstormResult, RoundTranscript
-    from agentcouncil.schemas import ConsensusArtifact, ConsensusStatus
+    from agentcouncil.deliberation import BrainstormResult
+    from agentcouncil.schemas import ConsensusArtifact, ConsensusStatus, Transcript
 
     artifact = ConsensusArtifact(
         recommended_direction="dir",
@@ -455,10 +455,10 @@ def test_existing_brainstorm_result_unchanged():
         next_action="next",
         status=ConsensusStatus.consensus,
     )
-    transcript = RoundTranscript(brief_prompt="brief")
+    transcript = Transcript(input_prompt="brief")
     result = BrainstormResult(artifact=artifact, transcript=transcript)
     assert result.artifact.status == "consensus"
-    assert result.transcript.brief_prompt == "brief"
+    assert result.transcript.input_prompt == "brief"
 
 
 def test_functions_exist():

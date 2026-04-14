@@ -17,11 +17,12 @@ from agentcouncil.schemas import (
     Transcript,
     TranscriptMeta,
     TranscriptTurn,
+    TurnPhase,
 )
 
 T = TypeVar("T", bound=BaseModel)
 
-__all__ = ["Exchange", "RoundTranscript", "BrainstormResult", "brainstorm", "run_deliberation", "DeriveStatus"]
+__all__ = ["Exchange", "RoundTranscript", "BrainstormResult", "brainstorm", "brainstorm_panel", "run_deliberation", "DeriveStatus"]
 
 log = logging.getLogger("agentcouncil.deliberation")
 
@@ -37,14 +38,21 @@ def _strip_code_fences(text: str) -> str:
 
 
 class Exchange(BaseModel):
-    """A single exchange in the negotiation phase."""
+    """A single exchange in the negotiation phase.
+
+    Deprecated: Use TranscriptTurn with phase="exchange" instead (TN-04).
+    """
 
     role: str  # "outside" or "lead"
     content: str
 
 
 class RoundTranscript(BaseModel):
-    """Full provenance of a brainstorm run - one field per round."""
+    """Full provenance of a brainstorm run - one field per round.
+
+    Deprecated: brainstorm() now returns Transcript instead (TN-04).
+    Kept for backward compatibility with code that imports this class.
+    """
 
     brief_prompt: str
     outside_proposal: Optional[str] = None
@@ -58,7 +66,7 @@ class BrainstormResult(BaseModel):
     """Return type of brainstorm(). Always populated, even on partial failure."""
 
     artifact: ConsensusArtifact
-    transcript: RoundTranscript
+    transcript: Transcript
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +161,7 @@ def _partial_failure_result(
     stage: str,
     outside_proposal: Optional[str] = None,
     lead_proposal: Optional[str] = None,
-    exchanges: Optional[List[Exchange]] = None,
+    exchanges: Optional[List[TranscriptTurn]] = None,
     outside_meta: Optional[TranscriptMeta] = None,
 ) -> BrainstormResult:
     """Build a BrainstormResult with partial_failure status.
@@ -170,12 +178,12 @@ def _partial_failure_result(
         next_action="Retry or inspect adapter configuration",
         status=ConsensusStatus.partial_failure,
     )
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges or [],
-        negotiation_output=None,
+        final_output=None,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
@@ -186,7 +194,7 @@ def _unresolved_disagreement_result(
     outside_proposal: str,
     lead_proposal: str,
     negotiation_output: str,
-    exchanges: Optional[List[Exchange]] = None,
+    exchanges: Optional[List[TranscriptTurn]] = None,
     outside_meta: Optional[TranscriptMeta] = None,
 ) -> BrainstormResult:
     """Build a BrainstormResult with unresolved_disagreement status.
@@ -203,12 +211,12 @@ def _unresolved_disagreement_result(
         next_action="Review transcript and retry or accept disagreement",
         status=ConsensusStatus.unresolved_disagreement,
     )
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges or [],
-        negotiation_output=negotiation_output,
+        final_output=negotiation_output,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
@@ -219,7 +227,7 @@ def _unresolved_disagreement_result(
 # ---------------------------------------------------------------------------
 
 
-def _format_discussion(exchanges: List[Exchange]) -> str:
+def _format_discussion(exchanges: List[TranscriptTurn]) -> str:
     """Format exchange history into a readable discussion block."""
     if not exchanges:
         return "(No prior discussion — this is the first exchange.)"
@@ -330,7 +338,7 @@ async def brainstorm(
     # Exchange rounds — agents alternate free-text responses.
     # negotiation_rounds=1 means no exchanges (original behavior).
     # negotiation_rounds=2 means 1 pair of exchanges before synthesis, etc.
-    exchanges: List[Exchange] = []
+    exchanges: List[TranscriptTurn] = []
 
     for round_num in range(negotiation_rounds - 1):
         discussion = _format_discussion(exchanges)
@@ -363,7 +371,7 @@ async def brainstorm(
             )
         log.debug("[exchange %d] outside done — %.1fs", round_num + 1, time.time() - te)
         emit("step", {"agent": "codex", "step": f"exchange {round_num + 1}", "status": "done", "elapsed": time.time() - te})
-        exchanges.append(Exchange(role="outside", content=outside_response))
+        exchanges.append(TranscriptTurn(role="outside", content=outside_response, phase="exchange"))
 
         # Lead responds
         discussion = _format_discussion(exchanges)
@@ -394,7 +402,7 @@ async def brainstorm(
             )
         log.debug("[exchange %d] lead done — %.1fs", round_num + 1, time.time() - te2)
         emit("step", {"agent": "claude", "step": f"exchange {round_num + 1}", "status": "done", "elapsed": time.time() - te2})
-        exchanges.append(Exchange(role="lead", content=lead_response))
+        exchanges.append(TranscriptTurn(role="lead", content=lead_response, phase="exchange"))
 
     # Final round — Outside synthesizes into structured JSON.
     discussion = _format_discussion(exchanges)
@@ -457,12 +465,197 @@ async def brainstorm(
              artifact.status, time.time() - t0)
     emit("done", {"status": artifact.status, "elapsed": time.time() - t0})
 
-    transcript = RoundTranscript(
-        brief_prompt=brief_prompt,
-        outside_proposal=outside_proposal,
-        lead_proposal=lead_proposal,
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=outside_proposal,
+        lead_initial=lead_proposal,
         exchanges=exchanges,
-        negotiation_output=negotiation_output,
+        final_output=negotiation_output,
+        meta=outside_meta,
+    )
+    return BrainstormResult(artifact=artifact, transcript=transcript)
+
+
+# ---------------------------------------------------------------------------
+# Blind Panel — Sealed N-Party Proposals (BP-01..BP-14)
+# ---------------------------------------------------------------------------
+
+PANEL_SYNTHESIS_TEMPLATE = """\
+You are synthesizing multiple independent proposals for the same problem.
+Each proposal was written without seeing the others (sealed independence).
+
+## Problem Brief
+{brief_prompt}
+
+## Proposals
+{proposals_text}
+
+## Lead Agent's Proposal
+{lead_proposal}
+
+Synthesize all proposals into a final consensus. Identify agreement points,
+disagreement points, and rejected alternatives across ALL proposals.
+
+Return your response as JSON matching this schema:
+{schema}"""
+
+
+async def brainstorm_panel(
+    brief: Brief,
+    outside_adapters: List[AgentAdapter],
+    lead_adapter: AgentAdapter,
+    synthesizer_adapter: AgentAdapter,
+    outside_labels: Optional[List[str]] = None,
+    on_event: Optional[OnEvent] = None,
+    outside_meta: Optional[TranscriptMeta] = None,
+) -> BrainstormResult:
+    """Run sealed N-party brainstorm (BP-01..BP-14).
+
+    Each outside agent receives the same brief and proposes independently.
+    All proposals are collected before reveal. Synthesis handles N+1 proposals.
+
+    Args:
+        brief: The problem brief.
+        outside_adapters: List of AgentAdapters for outside agents (max 5, BP-06).
+        lead_adapter: AgentAdapter for the lead agent.
+        synthesizer_adapter: AgentAdapter for synthesis.
+        outside_labels: Optional labels for each outside agent (for provenance).
+        on_event: Optional event callback.
+        outside_meta: Optional provenance metadata.
+
+    Returns:
+        BrainstormResult with all proposals in transcript.
+
+    Raises:
+        ValueError: If more than 5 outside agents (BP-06).
+    """
+    import asyncio
+
+    emit = on_event or _noop_event
+
+    # BP-06: Max agents cap
+    if len(outside_adapters) > 5:
+        raise ValueError(f"Blind Panel maximum 5 outside agents, got {len(outside_adapters)}")
+
+    if not outside_adapters:
+        raise ValueError("Blind Panel requires at least 1 outside agent")
+
+    labels = outside_labels or [f"agent-{i+1}" for i in range(len(outside_adapters))]
+    brief_prompt = brief.to_prompt()
+
+    emit("start", {"panel_size": len(outside_adapters)})
+
+    # BP-02, BP-03: Collect all proposals in parallel (sealed)
+    async def _get_proposal(adapter, label):
+        try:
+            return label, await adapter.acall(brief_prompt)
+        except Exception as e:
+            log.warning("panel agent %s failed: %s", label, e)
+            return label, None
+
+    tasks = [_get_proposal(a, l) for a, l in zip(outside_adapters, labels)]
+    raw_results = await asyncio.gather(*tasks)
+
+    # BP-14: Filter out failures, continue if N-1 >= 1
+    proposals = [(label, text) for label, text in raw_results if text is not None]
+    if not proposals:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error="All panel agents failed",
+            stage="panel",
+            outside_meta=outside_meta,
+        )
+
+    emit("step", {"step": "proposals_collected", "count": len(proposals)})
+
+    # Get lead proposal
+    try:
+        lead_proposal = await lead_adapter.acall(brief_prompt)
+    except AdapterError as e:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error=str(e),
+            stage="lead",
+            outside_meta=outside_meta,
+        )
+
+    # Build proposal turns with provenance (BP-05)
+    exchange_turns: List[TranscriptTurn] = []
+    for label, text in proposals:
+        exchange_turns.append(TranscriptTurn(
+            role="outside",
+            content=text,
+            phase="proposal",
+            actor_id=label,
+            actor_provider=label,
+            timestamp=time.time(),
+        ))
+    exchange_turns.append(TranscriptTurn(
+        role="lead",
+        content=lead_proposal,
+        phase="proposal",
+        actor_id="lead",
+        timestamp=time.time(),
+    ))
+
+    # BP-04: N+1 synthesis
+    proposals_text = "\n\n".join(
+        f"### Proposal from {label}\n{text}" for label, text in proposals
+    )
+    schema = _filtered_schema()
+    synthesis_prompt = PANEL_SYNTHESIS_TEMPLATE.format(
+        brief_prompt=brief_prompt,
+        proposals_text=proposals_text,
+        lead_proposal=lead_proposal,
+        schema=schema,
+    )
+
+    emit("step", {"step": "synthesize", "status": "active"})
+    try:
+        synthesis_output = await synthesizer_adapter.acall(synthesis_prompt)
+    except AdapterError as e:
+        return _partial_failure_result(
+            brief_prompt=brief_prompt,
+            error=str(e),
+            stage="synthesis",
+            outside_proposal=proposals[0][1] if proposals else None,
+            lead_proposal=lead_proposal,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    # Parse synthesis
+    synthesis_json = _strip_code_fences(synthesis_output)
+    try:
+        artifact = ConsensusArtifact.model_validate_json(synthesis_json)
+    except (ValidationError, json.JSONDecodeError, ValueError):
+        return _unresolved_disagreement_result(
+            brief_prompt=brief_prompt,
+            outside_proposal=proposals[0][1] if proposals else "",
+            lead_proposal=lead_proposal,
+            negotiation_output=synthesis_output,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    if artifact.status == ConsensusStatus.partial_failure:
+        return _unresolved_disagreement_result(
+            brief_prompt=brief_prompt,
+            outside_proposal=proposals[0][1] if proposals else "",
+            lead_proposal=lead_proposal,
+            negotiation_output=synthesis_output,
+            exchanges=exchange_turns,
+            outside_meta=outside_meta,
+        )
+
+    emit("done", {"status": artifact.status})
+
+    transcript = Transcript(
+        input_prompt=brief_prompt,
+        outside_initial=proposals[0][1] if proposals else None,
+        lead_initial=lead_proposal,
+        exchanges=exchange_turns,
+        final_output=synthesis_output,
         meta=outside_meta,
     )
     return BrainstormResult(artifact=artifact, transcript=transcript)
@@ -661,6 +854,8 @@ async def run_deliberation(
     lead_input_prompt: Optional[str] = None,
     derive_status: Optional[DeriveStatus] = None,
     outside_meta: Optional[TranscriptMeta] = None,
+    checkpoint_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    resume_state: Optional[Dict[str, Any]] = None,
 ) -> DeliberationResult:
     """Run the dual-independent deliberation protocol and return a structured result.
 
@@ -702,39 +897,61 @@ async def run_deliberation(
               len(input_prompt), exchange_rounds)
     emit("start", {"exchange_rounds": exchange_rounds})
 
-    # Phase 1: Independent initial analysis (COM-06)
-    # Outside agent sees only input_prompt
-    emit("step", {"agent": "outside", "step": "initial", "status": "active"})
-    try:
-        outside_initial = await outside_adapter.acall(input_prompt)
-    except AdapterError as e:
-        log.warning("outside initial failed: %s", e)
-        emit("step", {"agent": "outside", "step": "initial", "status": "error"})
-        return _generic_partial_failure(
-            artifact_cls, input_prompt, str(e), "outside",
-            outside_meta=outside_meta,
-        )
-    emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+    # R-01: Resume from saved state if provided
+    _skip_to_synthesis = False
+    if resume_state is not None:
+        outside_initial = resume_state.get("outside_initial")
+        lead_initial = resume_state.get("lead_initial")
+        skip_phase = resume_state.get("skip_to", "")
+        if outside_initial and lead_initial and skip_phase == "synthesis":
+            _skip_to_synthesis = True
+            log.debug("resuming from checkpoint — skipping to synthesis")
 
-    # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
-    lead_prompt = lead_input_prompt if lead_input_prompt is not None else input_prompt
-    emit("step", {"agent": "lead", "step": "initial", "status": "active"})
-    try:
-        lead_initial = await lead_adapter.acall(lead_prompt)
-    except AdapterError as e:
-        log.warning("lead initial failed: %s", e)
-        emit("step", {"agent": "lead", "step": "initial", "status": "error"})
-        return _generic_partial_failure(
-            artifact_cls, input_prompt, str(e), "lead",
-            outside_initial=outside_initial,
+    if not _skip_to_synthesis:
+        # Phase 1: Independent initial analysis (COM-06)
+        # Outside agent sees only input_prompt
+        emit("step", {"agent": "outside", "step": "initial", "status": "active"})
+        try:
+            outside_initial = await outside_adapter.acall(input_prompt)
+        except AdapterError as e:
+            log.warning("outside initial failed: %s", e)
+            emit("step", {"agent": "outside", "step": "initial", "status": "error"})
+            return _generic_partial_failure(
+                artifact_cls, input_prompt, str(e), "outside",
+                outside_meta=outside_meta,
+            )
+        emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+
+        # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
+        lead_prompt = lead_input_prompt if lead_input_prompt is not None else input_prompt
+        emit("step", {"agent": "lead", "step": "initial", "status": "active"})
+        try:
+            lead_initial = await lead_adapter.acall(lead_prompt)
+        except AdapterError as e:
+            log.warning("lead initial failed: %s", e)
+            emit("step", {"agent": "lead", "step": "initial", "status": "error"})
+            return _generic_partial_failure(
+                artifact_cls, input_prompt, str(e), "lead",
+                outside_initial=outside_initial,
             outside_meta=outside_meta,
         )
     emit("step", {"agent": "lead", "step": "initial", "status": "done"})
 
+    # Checkpoint: both proposals received (RP-02)
+    if checkpoint_callback is not None:
+        checkpoint_callback("proposals_received", {
+            "input_prompt": input_prompt,
+            "outside_initial": outside_initial,
+            "lead_initial": lead_initial,
+        })
+
     # Phase 2: Exchange rounds
     exchanges: List[TranscriptTurn] = []
+    if resume_state and resume_state.get("exchanges"):
+        exchanges = [TranscriptTurn.model_validate(t) if isinstance(t, dict) else t
+                     for t in resume_state["exchanges"]]
 
-    for round_num in range(exchange_rounds - 1):
+    for round_num in range(exchange_rounds - 1 if not _skip_to_synthesis else 0):
         discussion = _format_exchange_discussion(exchanges)
 
         # Outside exchange
@@ -758,7 +975,12 @@ async def run_deliberation(
                 exchanges=exchanges,
                 outside_meta=outside_meta,
             )
-        exchanges.append(TranscriptTurn(role="outside", content=outside_response))
+        exchanges.append(TranscriptTurn(
+            role="outside", content=outside_response, phase="exchange",
+            actor_provider=outside_meta.outside_provider if outside_meta else None,
+            actor_model=outside_meta.outside_model if outside_meta else None,
+            timestamp=time.time(),
+        ))
         emit("step", {"agent": "outside", "step": f"exchange {round_num + 1}", "status": "done"})
 
         # Lead exchange
@@ -783,10 +1005,30 @@ async def run_deliberation(
                 exchanges=exchanges,
                 outside_meta=outside_meta,
             )
-        exchanges.append(TranscriptTurn(role="lead", content=lead_response))
+        exchanges.append(TranscriptTurn(
+            role="lead", content=lead_response, phase="exchange",
+            actor_provider=outside_meta.lead_backend if outside_meta else None,
+            actor_model=outside_meta.lead_model if outside_meta else None,
+            timestamp=time.time(),
+        ))
         emit("step", {"agent": "lead", "step": f"exchange {round_num + 1}", "status": "done"})
 
+        # Checkpoint: exchange round complete (RP-02)
+        if checkpoint_callback is not None:
+            checkpoint_callback("exchange_complete", {
+                "round": round_num + 1,
+                "exchanges": len(exchanges),
+                "accumulated_turns": [t.model_dump() for t in exchanges],
+            })
+
     # Phase 3: Synthesis
+
+    # Checkpoint: before synthesis (RP-02)
+    if checkpoint_callback is not None:
+        checkpoint_callback("before_synthesis", {
+            "exchanges": len(exchanges),
+        })
+
     discussion = _format_exchange_discussion(exchanges)
     schema_json = _generic_filtered_schema(artifact_cls)
     synthesis_prompt = synthesis_prompt_fn(

@@ -34,12 +34,13 @@ from agentcouncil.certifier import CertificationCache, check_certification_gate
 from agentcouncil.providers.base import OutsideProvider, ProviderError
 from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.session import OutsideSession
+from agentcouncil.schemas import JournalEntry
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.1.0")
+mcp = FastMCP("agentcouncil", version="0.2.0")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -343,6 +344,7 @@ async def brainstorm_tool(
     rounds: int = 1,
     backend: str | None = None,
     outside_agent: str | None = None,
+    backends: list[str] | None = None,
 ) -> dict:
     """Run the AgentCouncil deliberation protocol and return a consensus artifact.
 
@@ -372,12 +374,55 @@ async def brainstorm_tool(
         BrainstormResult as a dict with two top-level keys:
         - 'artifact': ConsensusArtifact with recommended_direction, agreement_points,
           disagreement_points, rejected_alternatives, open_risks, next_action, status.
-        - 'transcript': RoundTranscript with brief_prompt, outside_proposal,
-          lead_proposal, exchanges (back-and-forth discussion),
-          negotiation_output, and meta (backend provenance).
+        - 'transcript': Transcript with input_prompt, outside_initial,
+          lead_initial, exchanges (back-and-forth discussion),
+          final_output, and meta (backend provenance).
     """
+    import time as _time
+    _t0 = _time.time()
+
     effective_backend = backend or outside_agent
     lead = ClaudeAdapter(model="opus", timeout=300)
+
+    # BP-01: Multi-agent Blind Panel mode
+    if backends and len(backends) > 1:
+        from agentcouncil.deliberation import brainstorm_panel
+        # Build brief first
+        if code_context is not None:
+            brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+            builder = BriefBuilder(adapter=brief_adapter)
+            excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
+            brief = builder.build(context, code_context=excerpts)
+        else:
+            brief = Brief(problem_statement=context, background="", constraints=[], goals=[], open_questions=[])
+
+        # Create adapters for each backend
+        outside_adapters = []
+        sessions_to_close = []
+        try:
+            for bk in backends:
+                provider = _make_provider(profile=bk)
+                runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+                session = OutsideSession(provider, runtime, profile=bk)
+                await session.open()
+                outside_adapters.append(OutsideSessionAdapter(session))
+                sessions_to_close.append((provider, session))
+
+            synthesizer = ClaudeAdapter(model="opus", timeout=300)
+            result = await brainstorm_panel(
+                brief=brief,
+                outside_adapters=outside_adapters,
+                lead_adapter=lead,
+                synthesizer_adapter=synthesizer,
+                outside_labels=backends,
+            )
+        finally:
+            for prov, sess in sessions_to_close:
+                await prov.close()
+                await sess.close()
+
+        _persist_journal("brainstorm", result, _t0)
+        return result.model_dump()
 
     if code_context is not None:
         # Complex context with code — use BriefBuilder to extract structure.
@@ -450,6 +495,7 @@ async def brainstorm_tool(
         )
         result.transcript.meta = meta
 
+    _persist_journal("brainstorm", result, _t0)
     return result.model_dump()
 
 
@@ -491,6 +537,50 @@ async def review_tool(
         - 'transcript': Transcript with input_prompt, outside_initial, lead_initial,
           exchanges, final_output, and meta (backend provenance).
     """
+    import time as _time
+    _t0 = _time.time()
+
+    # R2-01: Create journal session at protocol start
+    _journal_sid = _create_journal_session("review", _t0)
+
+    # R3-01: Mutable checkpoint state — later phases merge into this, never replace
+    _cp_state: dict = {
+        "protocol_type": "review",
+        "input_prompt": "",
+        "outside_initial": None,
+        "lead_initial": None,
+        "accumulated_turns": [],
+        "exchange_rounds_completed": 0,
+        "exchange_rounds_total": max(1, rounds),
+        "provider_config": {"profile": backend or outside_agent},
+        "artifact_cls_name": "ReviewArtifact",
+    }
+
+    def _checkpoint_cb(phase: str, data: dict) -> None:
+        """Persist checkpoint to journal during execution (R3-01: merge, don't replace)."""
+        if _journal_sid:
+            try:
+                from agentcouncil.workflow import ProtocolCheckpoint, ProtocolPhase, save_checkpoint
+                # Merge new data into accumulated state
+                if "input_prompt" in data and data["input_prompt"]:
+                    _cp_state["input_prompt"] = data["input_prompt"]
+                if "outside_initial" in data:
+                    _cp_state["outside_initial"] = data["outside_initial"]
+                if "lead_initial" in data:
+                    _cp_state["lead_initial"] = data["lead_initial"]
+                if "round" in data:
+                    _cp_state["exchange_rounds_completed"] = data["round"]
+                if "accumulated_turns" in data:
+                    _cp_state["accumulated_turns"] = data["accumulated_turns"]
+
+                cp = ProtocolCheckpoint(
+                    current_phase=ProtocolPhase(phase),
+                    **_cp_state,
+                )
+                save_checkpoint(_journal_sid, cp)
+            except Exception:
+                pass  # Non-fatal
+
     effective_backend = backend or outside_agent
 
     # Certification gate: block prompt-only models from review (CERT-04)
@@ -535,7 +625,7 @@ async def review_tool(
                 outside_session_mode=session.session_mode,
                 outside_workspace_access=session.workspace_access,
             )
-            result = await review(review_input, outside, lead, outside_meta=meta)
+            result = await review(review_input, outside, lead, outside_meta=meta, checkpoint_callback=_checkpoint_cb)
         finally:
             await provider.close()
             await session.close()
@@ -544,9 +634,10 @@ async def review_tool(
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=300)
         meta = _build_meta(backend_str, "subprocess")
-        result = await review(review_input, outside, lead)
+        result = await review(review_input, outside, lead, checkpoint_callback=_checkpoint_cb)
         result.transcript.meta = meta
 
+    _persist_journal("review", result, _t0, session_id=_journal_sid)
     return result.model_dump()
 
 
@@ -588,6 +679,9 @@ async def decide_tool(
         - 'transcript': Transcript with input_prompt, outside_initial, lead_initial,
           exchanges, final_output, and meta (backend provenance).
     """
+    import time as _time
+    _t0 = _time.time()
+
     effective_backend = backend or outside_agent
     lead = ClaudeAdapter(model="opus", timeout=300)
 
@@ -636,6 +730,7 @@ async def decide_tool(
         result = await decide(decide_input, outside, lead)
         result.transcript.meta = meta
 
+    _persist_journal("decide", result, _t0)
     return result.model_dump()
 
 
@@ -648,6 +743,7 @@ async def challenge_tool(
     rounds: int = 2,
     backend: str | None = None,
     outside_agent: str | None = None,
+    specialist_provider: str | None = None,
 ) -> dict:
     """Run the AgentCouncil challenge protocol -- adversarial stress-testing.
 
@@ -678,6 +774,9 @@ async def challenge_tool(
         - 'transcript': Transcript with input_prompt, outside_initial, lead_initial,
           exchanges, final_output, and meta (backend provenance).
     """
+    import time as _time
+    _t0 = _time.time()
+
     effective_backend = backend or outside_agent
 
     # Certification gate: block prompt-only models from challenge (CERT-04)
@@ -734,6 +833,7 @@ async def challenge_tool(
         result = await challenge(challenge_input, outside, lead)
         result.transcript.meta = meta
 
+    _persist_journal("challenge", result, _t0)
     return result.model_dump()
 
 
@@ -806,6 +906,251 @@ def show_effective_config_tool(
     """
     loader = ProfileLoader()
     return loader.effective_report()
+
+
+# ---------------------------------------------------------------------------
+# Journal persistence (DJ-01, DJ-11)
+# ---------------------------------------------------------------------------
+
+
+def _create_journal_session(protocol_type: str, start_time: float) -> str | None:
+    """Create a journal entry at protocol start so checkpoints can attach (R-02).
+
+    Returns session_id on success, None on failure. Never raises.
+    """
+    try:
+        from agentcouncil.journal import write_entry
+        from agentcouncil.schemas import Transcript
+
+        session_id = str(uuid.uuid4())
+        entry = JournalEntry(
+            session_id=session_id,
+            protocol_type=protocol_type,
+            start_time=start_time,
+            end_time=0.0,
+            status="consensus",
+            artifact={},
+            transcript=Transcript(input_prompt="(in progress)"),
+        )
+        write_entry(entry)
+        return session_id
+    except Exception as e:
+        logging.warning("journal session create failed (non-fatal): %s", e)
+        return None
+
+
+def _persist_journal(
+    protocol_type: str,
+    result: object,
+    start_time: float,
+    session_id: str | None = None,
+) -> None:
+    """Persist a protocol result to the journal (DJ-01, DJ-11).
+
+    If session_id is provided, updates the existing entry.
+    Otherwise creates a new one. Never raises.
+    """
+    import time as _time
+
+    try:
+        from agentcouncil.journal import write_entry
+
+        # Extract transcript and artifact from result
+        result_dict = result.model_dump() if hasattr(result, "model_dump") else {}
+        transcript_data = result_dict.get("transcript", {})
+        artifact_data = result_dict.get("artifact", {})
+        status_val = (
+            result_dict.get("deliberation_status")
+            or artifact_data.get("status")
+            or "consensus"
+        )
+
+        from agentcouncil.schemas import Transcript
+
+        transcript = Transcript.model_validate(transcript_data)
+
+        # Extract title from first line of input prompt
+        raw_prompt = transcript_data.get("input_prompt", "") or ""
+        first_line = raw_prompt.strip().split("\n")[0].lstrip("# ").strip()
+        title = first_line[:80] if first_line else None
+
+        entry = JournalEntry(
+            session_id=session_id or str(uuid.uuid4()),
+            title=title,
+            protocol_type=protocol_type,
+            start_time=start_time,
+            end_time=_time.time(),
+            status=status_val,
+            artifact=artifact_data,
+            transcript=transcript,
+        )
+        write_entry(entry)
+    except Exception as e:
+        logging.warning("journal persist failed (non-fatal): %s", e)
+
+
+@mcp.tool(name="protocol_resume")
+async def protocol_resume_tool(
+    session_id: str,
+    profile: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Resume a checkpointed protocol run from its last phase boundary.
+
+    Reconstructs protocol state from the journal and continues execution.
+    Returns the same artifact type as a fresh run (RP-09).
+
+    Args:
+        session_id: Journal session ID with saved checkpoint.
+        profile: Optional backend profile for the outside agent.
+        model: Optional model override.
+
+    Returns:
+        DeliberationResult as dict.
+
+    Raises:
+        ValueError: If session is unknown, has no checkpoint, or is completed.
+    """
+    from agentcouncil.workflow import resume_protocol
+
+    lead = ClaudeAdapter(model="opus", timeout=300)
+
+    try:
+        provider = _make_provider(profile=profile, model=model)
+        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        session = OutsideSession(provider, runtime, profile=profile, model=model)
+        await session.open()
+        try:
+            outside = OutsideSessionAdapter(session)
+            result = await resume_protocol(session_id, outside, lead)
+        finally:
+            await provider.close()
+            await session.close()
+    except ValueError:
+        backend_str = resolve_outside_backend(profile)
+        outside = resolve_outside_adapter(profile, timeout=300)
+        result = await resume_protocol(session_id, outside, lead)
+
+    return result.model_dump()
+
+
+@mcp.tool(name="review_loop")
+async def review_loop_tool(
+    artifact: str,
+    artifact_type: str = "code",
+    review_objective: str | None = None,
+    focus_areas: list[str] | None = None,
+    max_iterations: int = 3,
+    backend: str | None = None,
+) -> dict:
+    """Run an iterative review convergence loop (CL-01).
+
+    Reviews the artifact, tracks findings, and loops through fix/re-review
+    cycles until all findings are verified or max iterations reached.
+
+    Args:
+        artifact: Text content to review.
+        artifact_type: Type (code, design, plan, document, other).
+        review_objective: Optional review focus.
+        focus_areas: Optional specific areas.
+        max_iterations: Maximum iterations (default 3, hard cap 10).
+        backend: Backend profile for the outside reviewer.
+    """
+    import time as _time
+
+    from agentcouncil.convergence import review_loop
+
+    lead = ClaudeAdapter(model="opus", timeout=300)
+
+    try:
+        provider = _make_provider(profile=backend)
+        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        session = OutsideSession(provider, runtime, profile=backend)
+        await session.open()
+        try:
+            outside = OutsideSessionAdapter(session)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+            )
+        finally:
+            await provider.close()
+            await session.close()
+    except ValueError:
+        outside = resolve_outside_adapter(backend, timeout=300)
+        result = await review_loop(
+            artifact=artifact,
+            artifact_type=artifact_type,
+            outside_adapter=outside,
+            lead_adapter=lead,
+            review_objective=review_objective,
+            focus_areas=focus_areas,
+            max_iterations=max_iterations,
+        )
+
+    return result.model_dump()
+
+
+@mcp.tool(name="journal_stream")
+def journal_stream_tool(
+    session_id: str,
+    since_cursor: int | None = None,
+) -> dict:
+    """Stream events from a journal entry with cursor-based retrieval.
+
+    Read-only. Returns events since the given cursor position.
+
+    Args:
+        session_id: UUID string of the session.
+        since_cursor: Return events after this cursor. Omit for all events.
+
+    Returns:
+        Dict with 'events' (list) and 'next_cursor' (int).
+    """
+    from agentcouncil.journal import stream_events
+
+    return stream_events(session_id, since_cursor=since_cursor)
+
+
+@mcp.tool(name="journal_list")
+def journal_list_tool(
+    limit: int = 20,
+    protocol: str | None = None,
+) -> list[dict]:
+    """List recent deliberation journal entries.
+
+    Returns metadata (not full transcripts) sorted by start_time descending.
+
+    Args:
+        limit: Maximum entries to return (default 20).
+        protocol: Filter by protocol type (brainstorm, review, decide, challenge).
+    """
+    from agentcouncil.journal import list_entries
+
+    return list_entries(limit=limit, protocol=protocol)
+
+
+@mcp.tool(name="journal_get")
+def journal_get_tool(session_id: str) -> dict:
+    """Retrieve a full journal entry by session_id.
+
+    Args:
+        session_id: UUID string of the session to retrieve.
+
+    Returns:
+        Full JournalEntry as dict including transcript and artifact.
+
+    Raises:
+        ValueError: If session_id is unknown.
+    """
+    from agentcouncil.journal import read_entry
+
+    return read_entry(session_id).model_dump()
 
 
 if __name__ == "__main__":

@@ -172,3 +172,119 @@ def test_transcript_meta_partial_construction():
     assert meta.outside_profile is None
     assert meta.outside_session_mode is None
     assert meta.outside_workspace_access is None
+
+
+# ---------------------------------------------------------------------------
+# TN: Transcript Normalization — Provenance Fields (v2.0)
+# ---------------------------------------------------------------------------
+
+
+def test_turn_phase_literal_values():
+    """TN-03: TurnPhase has the expected literal values."""
+    from agentcouncil.schemas import TurnPhase
+    from typing import get_args
+
+    expected = {"brief", "proposal", "exchange", "synthesis", "specialist", "convergence"}
+    assert set(get_args(TurnPhase)) == expected
+
+
+def test_turn_phase_exported():
+    """TN-03: TurnPhase is exported from __all__."""
+    import agentcouncil.schemas as mod
+
+    assert "TurnPhase" in mod.__all__
+
+
+def test_transcript_turn_provenance_fields_optional():
+    """TN-02: TranscriptTurn with provenance fields — all Optional, backward compat."""
+    from agentcouncil.schemas import TranscriptTurn
+
+    # Old-style construction still works (no provenance fields)
+    turn = TranscriptTurn(role="outside", content="hello")
+    assert turn.role == "outside"
+    assert turn.content == "hello"
+    assert turn.actor_id is None
+    assert turn.actor_provider is None
+    assert turn.actor_model is None
+    assert turn.phase is None
+    assert turn.timestamp is None
+    assert turn.parent_turn_id is None
+
+
+def test_transcript_turn_provenance_fields_populated():
+    """TN-02: TranscriptTurn with all provenance fields set."""
+    from agentcouncil.schemas import TranscriptTurn
+
+    turn = TranscriptTurn(
+        role="outside",
+        content="my proposal",
+        actor_id="agent-001",
+        actor_provider="codex",
+        actor_model="gpt-4.1",
+        phase="proposal",
+        timestamp=1713100000.0,
+        parent_turn_id=None,
+    )
+    assert turn.actor_id == "agent-001"
+    assert turn.actor_provider == "codex"
+    assert turn.actor_model == "gpt-4.1"
+    assert turn.phase == "proposal"
+    assert turn.timestamp == 1713100000.0
+    assert turn.parent_turn_id is None
+
+
+def test_transcript_turn_provenance_json_roundtrip():
+    """TN-02: Provenance fields survive JSON serialization roundtrip."""
+    from agentcouncil.schemas import TranscriptTurn
+
+    turn = TranscriptTurn(
+        role="lead",
+        content="response",
+        actor_id="lead-001",
+        actor_provider="claude",
+        actor_model="claude-opus-4-6",
+        phase="exchange",
+        timestamp=1713100500.0,
+        parent_turn_id="turn-prev",
+    )
+    json_str = turn.model_dump_json()
+    restored = TranscriptTurn.model_validate_json(json_str)
+    assert restored.model_dump() == turn.model_dump()
+
+
+def test_transcript_turn_invalid_phase_rejected():
+    """TN-03: Invalid phase value is rejected by Pydantic."""
+    from agentcouncil.schemas import TranscriptTurn
+
+    with pytest.raises(ValidationError):
+        TranscriptTurn(role="outside", content="x", phase="invalid_phase")
+
+
+def test_transcript_meta_deprecated_note():
+    """TN-07: TranscriptMeta docstring contains deprecation note."""
+    from agentcouncil.schemas import TranscriptMeta
+
+    assert "deprecated" in (TranscriptMeta.__doc__ or "").lower()
+
+
+def test_all_protocols_use_transcript():
+    """TN-01: All four protocols use the same Transcript model."""
+    from agentcouncil.schemas import Transcript, DeliberationResult
+    from agentcouncil.deliberation import BrainstormResult
+
+    # BrainstormResult uses Transcript (migrated from RoundTranscript)
+    assert BrainstormResult.model_fields["transcript"].annotation is Transcript
+    # DeliberationResult (review/decide/challenge) uses Transcript
+    assert DeliberationResult.model_fields["transcript"].annotation is Transcript
+
+
+def test_artifact_shapes_unchanged():
+    """TN-06: Existing artifact output shapes are NOT changed."""
+    from agentcouncil.schemas import (
+        ConsensusArtifact, ReviewArtifact, DecideArtifact, ChallengeArtifact,
+    )
+    # Verify key fields still exist
+    assert "recommended_direction" in ConsensusArtifact.model_fields
+    assert "verdict" in ReviewArtifact.model_fields
+    assert "outcome" in DecideArtifact.model_fields
+    assert "readiness" in ChallengeArtifact.model_fields

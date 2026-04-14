@@ -1,8 +1,8 @@
 ---
 name: review
-description: Run the AgentCouncil review protocol. You (Claude) frame the review question and direct the outside agent to the right files. The outside agent reviews independently. Use when work is done and you want independent critique.
-allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
-argument-hint: [what to review — plan, implementation, milestone, design]
+description: Run the AgentCouncil review protocol. You (Claude) frame the review question and direct the outside agent to the right files. The outside agent reviews independently. Use when work is done and you want independent critique. Supports --loop for iterative convergence (fix → re-review → verify until clean).
+allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info mcp__agentcouncil__review_loop
+argument-hint: [what to review — plan, implementation, milestone, design] [--loop to iterate until clean]
 ---
 
 # AgentCouncil Review
@@ -10,6 +10,16 @@ argument-hint: [what to review — plan, implementation, milestone, design]
 You are running the AgentCouncil review protocol. You are the orchestrator — the one who built or owns the thing being reviewed. The outside agent is the independent reviewer with fresh eyes.
 
 **Target:** $ARGUMENTS
+
+## Mode Detection
+
+Parse the arguments for convergence mode. Use **iterative convergence** (review_loop) if ANY of these are true:
+- The user included `--loop`, `--converge`, or `--iterate` in arguments
+- The user's request explicitly asks for iterative behavior: "fix until clean", "keep reviewing", "iterate until no findings", "review and fix", "repeat until pass"
+
+Otherwise, use **one-shot review** (the default protocol below).
+
+**If convergence mode is detected:** Call the `mcp__agentcouncil__review_loop` MCP tool with the artifact content, artifact_type, and max_iterations (default 3). Present the ConvergenceResult showing iteration history, finding statuses, exit reason, and final verdict. Skip the one-shot protocol steps below.
 
 ## Backend Selection
 
@@ -95,6 +105,17 @@ For each finding:
 ```
 
 If JSON fails to parse, report verdict as "escalate" and show raw response.
+
+### Step 5: Convergence hint (conditional)
+
+If the verdict is `revise` or `escalate` and there are confirmed findings, add this hint after the result:
+
+> To iterate on these findings until clean, run `/review --loop`
+
+Do NOT show this hint if:
+- The verdict is `pass`
+- There are no confirmed findings
+- The user already used `--loop` mode
 
 ## Rules
 

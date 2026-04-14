@@ -11,6 +11,8 @@ Two agents. Distinct roles. No echo chamber.
 
 AgentCouncil convenes Claude Code and an outside agent — each with a distinct role — to deliberate on problems. In brainstorm, both propose independently before seeing each other's work. In review, decide, and challenge, the outside agent evaluates, compares, or attacks without seeing Claude Code's internal reasoning. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
+**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, resumable protocol state, and a CLI session inspector. Expert Witness specialist checks and live Turn Stream events are available as building blocks but not yet wired into protocol execution.
+
 </div>
 
 ---
@@ -23,8 +25,10 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 |:---|:---|:---|
 | "What should we do?" | `/brainstorm` | Both agents propose independently, then negotiate toward consensus |
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
+| "Review iteratively" | `/review --loop` | Iterative review: findings → describe fix → re-review → verify |
 | "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
+| "What happened?" | `/inspect` | View past deliberation sessions from the journal |
 
 > **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
 
@@ -113,6 +117,30 @@ cp -r skills/ .claude/skills/
 
 </details>
 
+### Upgrade
+
+**Plugin install (marketplace):**
+
+```
+/plugin update agentcouncil
+/reload-plugins
+```
+
+**Manual install (from source):**
+
+```bash
+git pull
+pip install -e .
+```
+
+If you installed skills manually (`cp -r skills/ .claude/skills/`), re-copy them to pick up new or updated skills:
+
+```bash
+cp -r skills/ .claude/skills/
+```
+
+No configuration changes or migrations are required between versions. New features (journal, convergence loops, inspector) activate automatically. See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+
 ### Use
 
 ```
@@ -121,11 +149,29 @@ cp -r skills/ .claude/skills/
 
 That's it. Claude Code writes its proposal, sends a neutral brief to the outside agent, the outside agent proposes independently, they negotiate, and you get a structured consensus.
 
-Want more depth? Add rounds for additional exchange:
+Want more depth? Add rounds, use multiple backends, or run iterative review:
 
 ```
 /brainstorm 4 rounds How should we handle caching for our API?
-/challenge 3 rounds Stress test our deployment plan
+/review --loop Review this code until all findings are fixed
+/brainstorm backends=codex,ollama-local How should we cache?   # Blind Panel: 2 independent proposals
+```
+
+### Inspect Past Deliberations
+
+Every protocol run is persisted to a local journal. Use `/inspect` inside Claude Code or the CLI:
+
+```
+/inspect recent                                # List recent sessions
+/inspect <session_id>                          # View a specific session
+```
+
+From the terminal (after `pip install`):
+
+```bash
+agentcouncil --list                            # List recent sessions
+agentcouncil <session_id>                      # View formatted transcript
+agentcouncil <session_id> --json               # Raw JSON output
 ```
 
 ## How It Works
@@ -213,6 +259,14 @@ Integration tests require `claude` and `codex` CLIs on PATH:
 ```bash
 pytest -m real
 ```
+
+**Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. After modifying or adding skill files, copy them to the cache:
+
+```bash
+cp -r skills/ ~/.claude/plugins/cache/agentcouncil/agentcouncil/*/skills/
+```
+
+Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update` get fresh cache automatically.
 
 </details>
 

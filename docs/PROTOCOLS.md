@@ -1,6 +1,6 @@
 # Protocols
 
-AgentCouncil provides four deliberation protocols. Each convenes Claude Code (the orchestrator, referred to as "Claude" below) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other providers).
+AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for iterative workflows, multi-agent panels, and specialist consultation. Each protocol convenes Claude Code (the orchestrator, referred to as "Claude" below) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other providers).
 
 ## Quick Chooser
 
@@ -10,6 +10,8 @@ AgentCouncil provides four deliberation protocols. Each convenes Claude Code (th
 | "Is this good?" | **review** |
 | "Which one?" | **decide** |
 | "Will this break?" | **challenge** |
+| "Fix until clean" | `review_loop` MCP tool (convergence loop) |
+| "Get N perspectives" | **brainstorm** with `backends=` (Blind Panel) |
 
 ## Protocol Comparison
 
@@ -124,6 +126,60 @@ Claude defines three options with descriptions. Outside evaluates each for pros,
 
 Claude states assumptions: Redis always available, 60s staleness acceptable, write-through catches all mutations. Outside attacks each assumption. Claude defends. Output: readiness verdict with surviving/broken assumptions.
 
+## v2.0 Protocol Extensions
+
+### Convergence Loops (Iterative Review)
+
+One-shot review finds issues but doesn't verify they're fixed. Convergence loops close that gap.
+
+**How to use:**
+```
+/review --loop Review this implementation until all findings are fixed
+/review --converge Check this code and iterate until clean
+```
+
+The `/review` skill detects convergence intent from `--loop`, `--converge`, or phrases like "fix until clean" / "iterate until no findings". After a one-shot review with findings, it also shows a hint: *"To iterate on these findings until clean, run `/review --loop`"*.
+
+**Flow:**
+```
+[1] Initial review → produces findings with severities
+[2] Lead describes how it would address each finding
+[3] Scoped re-review → evaluates whether described changes resolve prior findings
+[4] Loop until: all verified, max iterations (default 3), or explicit approval
+```
+
+> **Note:** The current implementation evaluates described changes against the original artifact — it does not modify files between iterations. The convergence loop verifies that the lead's proposed approach addresses findings, not that code was physically changed.
+
+**Per-finding status tracking:** `open` → `fixed` → `verified` (or `reopened`, `wont_fix`).
+
+Currently available for review only. Challenge and decide convergence patterns will follow.
+
+### Blind Panel (N-Party Brainstorm)
+
+Standard brainstorm uses one outside agent. Blind Panel uses multiple:
+
+```
+[1] Claude writes proposal (full context)
+[2] N outside agents each receive the same brief
+[3] Each proposes independently (sealed — no agent sees another's proposal)
+[4] All proposals revealed simultaneously
+[5] Structured synthesis across N+1 proposals
+```
+
+Invoke with: `/brainstorm backends=codex,ollama-local How should we handle caching?`
+
+Maximum 5 outside agents. Partial panel on failure (continues with remaining agents).
+
+### Expert Witness (Specialist Checks)
+
+When a deliberation surfaces a sub-question neither agent can evaluate well, the specialist module provides building blocks for bounded consultation:
+
+- Receives only the targeted sub-question + minimal context (never the full debate)
+- Returns typed evaluative output aligned to the parent protocol
+- Evidence is advisory — must be cited in synthesis if used, but is not binding
+
+> **Status:** The `specialist_check()` function and typed schemas are implemented. Protocol-level integration (automatic invocation during challenge/review) is planned for a future release. The `challenge` tool accepts `specialist_provider` but does not yet invoke it automatically.
+
 ## Choosing the Right Protocol
 
 A common flow: **brainstorm** (explore approaches) -> **decide** (choose one) -> **review** (check the implementation) -> **challenge** (stress-test before shipping).
@@ -131,5 +187,8 @@ A common flow: **brainstorm** (explore approaches) -> **decide** (choose one) ->
 But each works standalone:
 - Got a vague problem? **brainstorm**
 - Got something to check? **review**
+- Want it fixed until clean? **review --loop**
 - Got options to compare? **decide**
 - Got a plan to ship? **challenge**
+- Want N perspectives? **brainstorm** with `backends=`
+- Want to look back? **inspect**
