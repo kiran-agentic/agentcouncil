@@ -11,6 +11,8 @@ Two agents. Distinct roles. No echo chamber.
 
 AgentCouncil convenes Claude Code and an outside agent — each with a distinct role — to deliberate on problems. In brainstorm, both propose independently before seeing each other's work. In review, decide, and challenge, the outside agent evaluates, compares, or attacks without seeing Claude Code's internal reasoning. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
+**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, protocol-scoped Expert Witness specialist checks, resumable protocol state, and a CLI session inspector.
+
 </div>
 
 ---
@@ -25,6 +27,7 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
 | "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
+| "Fix until clean" | `/review` (convergence) | Iterative review loop: findings → fix → re-review → verify |
 
 > **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
 
@@ -121,11 +124,23 @@ cp -r skills/ .claude/skills/
 
 That's it. Claude Code writes its proposal, sends a neutral brief to the outside agent, the outside agent proposes independently, they negotiate, and you get a structured consensus.
 
-Want more depth? Add rounds for additional exchange:
+Want more depth? Add rounds, use multiple backends, or run iterative review:
 
 ```
 /brainstorm 4 rounds How should we handle caching for our API?
 /challenge 3 rounds Stress test our deployment plan
+/brainstorm backends=codex,ollama-local How should we cache?   # Blind Panel: 2 independent proposals
+```
+
+### Inspect Past Deliberations
+
+Every protocol run is persisted to a local journal. Inspect past sessions:
+
+```bash
+agentcouncil inspect --list                    # List recent sessions
+agentcouncil inspect <session_id>              # View formatted transcript
+agentcouncil inspect <session_id> --json       # Raw JSON output
+agentcouncil inspect <session_id> --watch      # Stream live events
 ```
 
 ## How It Works
@@ -224,6 +239,7 @@ pytest -m real
 | [BACKENDS.md](docs/BACKENDS.md) | Backend selection and independence tiers |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical design for contributors |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | How to contribute |
+| [SPEC.md](SPEC.md) | v2.0 Deliberation Infrastructure spec (94 acceptance criteria) |
 
 ## License
 

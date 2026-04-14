@@ -103,7 +103,7 @@ This routing is transparent to callers — `session.call(prompt)` works identica
 
 ```
 agentcouncil/
-  server.py          # FastMCP server — session tools + protocol tools
+  server.py          # FastMCP server — session tools + protocol tools + journal tools
   providers/
     __init__.py      # re-exports from base
     base.py          # OutsideProvider ABC, ProviderResponse, StubProvider
@@ -118,12 +118,19 @@ agentcouncil/
   config.py          # AgentCouncilConfig, ProfileLoader, BackendProfile
   certifier.py       # ConformanceCertifier, CertificationResult
   adapters.py        # AgentAdapter (DEPRECATED — compat shim only)
-  schemas.py         # Pydantic models for protocol I/O
+  schemas.py         # Pydantic models for protocol I/O + journal + convergence + specialist
   brief.py           # Brief preparation with contamination detection
-  deliberation.py    # brainstorm engine
+  deliberation.py    # brainstorm engine + brainstorm_panel (Blind Panel)
   review.py          # review engine
   decide.py          # decide engine
   challenge.py       # challenge engine
+
+  # v2.0 Deliberation Infrastructure
+  journal.py         # Deliberation Journal — persistent sessions + Turn Stream events
+  workflow.py        # Resumable Protocol State — checkpoint/resume at phase boundaries
+  convergence.py     # Convergence Loops — iterative review workflow
+  specialist.py      # Expert Witness — bounded specialist consultation
+  inspector.py       # Deliberation Inspector — CLI session viewer
 
 skills/              # Skill definitions (protocol instructions)
   brainstorm/SKILL.md
@@ -132,7 +139,7 @@ skills/              # Skill definitions (protocol instructions)
   challenge/SKILL.md
 ```
 
-The skill files are the primary interface. The Python package provides the MCP session tools, the four protocol tools, and the library-mode engines.
+The skill files are the primary interface. The Python package provides the MCP session tools, the four protocol tools, the journal/inspector tools, and the library-mode engines.
 
 ## MCP Tools
 
@@ -151,12 +158,27 @@ Sessions are stored in `_SESSIONS` — an in-process dict mapping UUID strings t
 
 The four deliberation functions are also exposed as MCP tools for library-mode use:
 
-| Tool | Outside agent role | Optional param |
+| Tool | Outside agent role | Optional params |
 |------|--------------------|----------------|
-| `brainstorm` | Independent proposal + negotiation | `backend=` |
+| `brainstorm` | Independent proposal + negotiation | `backend=`, `backends=` (list for Blind Panel) |
 | `review` | Independent evaluative critique | `backend=` |
 | `decide` | Independent option assessment | `backend=` |
-| `challenge` | Adversarial attack on a plan | `backend=` |
+| `challenge` | Adversarial attack on a plan | `backend=`, `specialist_provider=` |
+
+### Convergence Tools
+
+| Tool | Purpose |
+|------|---------|
+| `review_loop` | Iterative review: findings → fix → scoped re-review → verify. Exits on all-verified, max iterations, or explicit approval |
+
+### Journal & Observability Tools
+
+| Tool | Purpose |
+|------|---------|
+| `journal_list(limit?, protocol?)` | List recent journal entries with metadata |
+| `journal_get(session_id)` | Retrieve a full journal entry |
+| `journal_stream(session_id, since_cursor?)` | Stream events with cursor-based pagination |
+| `protocol_resume(session_id, profile?, model?)` | Resume a checkpointed protocol run |
 
 ### Legacy Tools
 
@@ -236,25 +258,141 @@ READ_DIFF path=agentcouncil/
 
 The regex is anchored to line start (`re.MULTILINE`) to prevent casual prose mentions from triggering dispatch. This is disabled by default (`allow_textual_protocol=False`).
 
-## Transcript Metadata
+## Transcript & Provenance
 
-Protocol results include provenance metadata in `TranscriptMeta`:
+### Per-Turn Provenance (v2.0)
+
+Every `TranscriptTurn` now carries optional provenance fields for audit and inspection:
+
+```python
+class TranscriptTurn(BaseModel):
+    role: str                              # "outside", "lead", "director", "specialist"
+    content: str
+    source_refs: list[SourceRef] = []
+    # v2.0 provenance fields (all Optional for backward compat)
+    actor_id: Optional[str] = None         # unique agent identifier
+    actor_provider: Optional[str] = None   # backend provider name
+    actor_model: Optional[str] = None      # specific model used
+    phase: Optional[TurnPhase] = None      # "brief", "proposal", "exchange", "synthesis", "specialist", "convergence"
+    timestamp: Optional[float] = None      # epoch seconds
+    parent_turn_id: Optional[str] = None   # for threading specialist evidence
+```
+
+Exchange turns in `run_deliberation()` are populated with `phase="exchange"`, provider/model from metadata, and timestamps. Brainstorm proposal turns use `phase="proposal"`.
+
+### Envelope-Level Metadata (Deprecated)
+
+`TranscriptMeta` provides envelope-level provenance and is retained for backward compatibility but superseded by per-turn fields:
 
 ```python
 class TranscriptMeta(BaseModel):
-    lead_backend: Optional[str] = None          # "claude"
-    lead_model: Optional[str] = None            # "opus"
-    outside_backend: Optional[str] = None       # legacy string backend name
+    lead_backend: Optional[str] = None
+    lead_model: Optional[str] = None
+    outside_backend: Optional[str] = None
     outside_model: Optional[str] = None
-    outside_transport: Optional[str] = None     # "subprocess" or "session"
-    independence_tier: Optional[str] = None     # "cross_backend" or "same_backend_fresh_session"
-    outside_provider: Optional[str] = None      # "ollama", "openrouter", "codex", "claude", etc.
-    outside_profile: Optional[str] = None       # named profile from config
-    outside_session_mode: Optional[str] = None  # "persistent" or "replay" (equals session_strategy)
-    outside_workspace_access: Optional[str] = None  # "native", "assisted", "none"
+    outside_transport: Optional[str] = None
+    independence_tier: Optional[str] = None
+    outside_provider: Optional[str] = None
+    outside_profile: Optional[str] = None
+    outside_session_mode: Optional[str] = None
+    outside_workspace_access: Optional[str] = None
 ```
 
-The session layer populates `outside_session_mode` from the provider's `session_strategy` and `outside_workspace_access` from the provider's `workspace_access` class attribute.
+## v2.0 Deliberation Infrastructure
+
+### Deliberation Journal
+
+Every completed protocol run is automatically persisted to `~/.agentcouncil/journal/{session_id}.json`. Journal entries contain the full transcript, artifact, provenance metadata, execution events, and optional checkpoint state.
+
+**Key properties:**
+- **Atomic writes** — temp file + `os.replace()` prevents partial writes on crash
+- **Lazy directory creation** — journal directory created on first write, not at import time
+- **Path validation** — session IDs are validated with regex (`^[a-zA-Z0-9_\-]+$`) and resolved-path containment check to prevent traversal
+- **Schema versioned** — every entry has `schema_version: "1.0"` for future migration
+
+**Journal entry schema (`JournalEntry`):**
+- `session_id`, `protocol_type`, `start_time`, `end_time`, `status`
+- `artifact` (dict — serialized protocol artifact)
+- `transcript` (Transcript with per-turn provenance)
+- `events` (list — Turn Stream event log)
+- `state` (dict — checkpoint for resumable protocols)
+
+### Turn Stream
+
+Append-only event log within each journal entry, with cursor-based retrieval:
+
+- `append_event(session_id, event)` — appends with monotonic `event_id` and timestamp. Uses `fcntl` file locking to prevent concurrent write races
+- `stream_events(session_id, since_cursor?)` — returns events since cursor position. Read-only, side-effect-free
+
+Event types: `turn_added`, `phase_transition`, `status_change`, `specialist_evidence`, `finding_status_change`.
+
+### Resumable Protocol State
+
+Protocols can checkpoint at phase boundaries and resume from the last checkpoint:
+
+**Phase boundaries:** `brief_sent`, `proposals_received`, `exchange_complete`, `before_synthesis`, `completed`.
+
+**How it works:**
+1. Protocol tool creates a journal session at start via `_create_journal_session()`
+2. `checkpoint_callback` is passed through the protocol engine to `run_deliberation()`
+3. At each phase boundary, the callback merges new state (proposals, exchanges, round counts) into an accumulated `ProtocolCheckpoint`
+4. `protocol_resume(session_id)` loads the checkpoint, injects `resume_state` into `run_deliberation()`, which skips completed phases
+
+Currently wired for the review protocol. Other protocols will be added in future releases.
+
+### Convergence Loops
+
+Iterative review workflow that loops until findings are verified:
+
+```
+1. Initial review → produces findings with severities
+2. Lead addresses findings → describes changes
+3. Scoped re-review → checks prior findings + regressions (not full re-review)
+4. Loop until: all verified, max iterations reached, or explicit approval
+```
+
+**Per-finding status tracking:** `open` → `fixed` → `verified` (or `reopened`, `wont_fix`).
+
+**Finding identity:** Uses the existing `Finding.id` field. The outside agent assigns IDs; the system validates uniqueness, generates fallback IDs from title+severity hash when missing, and carries forward unmentioned IDs across iterations.
+
+**Hard cap:** `MAX_ITERATIONS = 10` regardless of caller configuration. Default is 3.
+
+### Expert Witness
+
+Bounded specialist consultation for protocol sub-questions. A specialist agent receives only a targeted sub-question and minimal context slice (never the full debate), returns typed evaluative output, and the result is inserted as provenance-tagged advisory evidence.
+
+**Key properties:**
+- Generic over protocol-owned Pydantic artifact types (`ChallengeSpecialistAssessment`, `ReviewSpecialistFinding`, `DecideSpecialistEvaluation`)
+- Output is evaluative, not prescriptive — schemas constrain against solutioning
+- Evidence is advisory — does not alter protocol truth unless adopted in synthesis with citation
+- One check per run by default, caller/protocol-controlled trigger
+- Graceful failure — returns `None` on error, protocol continues
+
+### Blind Panel
+
+Sealed N-party proposals where multiple outside agents propose independently before reveal:
+
+1. Each outside agent receives the same clean brief
+2. All proposals collected via `asyncio.gather()` before reveal (sealed independence)
+3. Structured synthesis across N+1 proposals with per-proposal provenance
+4. Maximum 5 outside agents per panel
+
+Exposed via `backends` parameter on `brainstorm` tool: `backends=["codex", "ollama-local"]`.
+
+Partial panel on failure: if one agent fails, the panel continues with remaining agents (valid if N-1 >= 1).
+
+### Deliberation Inspector
+
+CLI viewer for persisted journal entries:
+
+```bash
+agentcouncil inspect <session_id>        # Formatted transcript with provenance
+agentcouncil inspect --list              # Recent sessions
+agentcouncil inspect <session_id> --json # Raw JSON
+agentcouncil inspect <session_id> --watch # Stream live events
+```
+
+Renders protocol type, status, turns with actor identity/provider/model/phase/timestamp, independence markers, finding status progression, specialist evidence, and synthesis results.
 
 ## Migration from AgentAdapter
 
