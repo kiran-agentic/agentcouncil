@@ -10,7 +10,7 @@ AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for i
 | "Is this good?" | **review** |
 | "Which one?" | **decide** |
 | "Will this break?" | **challenge** |
-| "Fix until clean" | **review** (convergence loop via `review_loop` tool) |
+| "Fix until clean" | `review_loop` MCP tool (convergence loop) |
 | "Get N perspectives" | **brainstorm** with `backends=` (Blind Panel) |
 
 ## Protocol Comparison
@@ -161,12 +161,14 @@ Maximum 5 outside agents. Partial panel on failure (continues with remaining age
 
 ### Expert Witness (Specialist Checks)
 
-When a deliberation surfaces a sub-question neither agent can evaluate well, a specialist agent can be consulted:
+When a deliberation surfaces a sub-question neither agent can evaluate well, the specialist module provides building blocks for bounded consultation:
 
 - Receives only the targeted sub-question + minimal context (never the full debate)
 - Returns typed evaluative output aligned to the parent protocol
 - Evidence is advisory — must be cited in synthesis if used, but is not binding
 - One check per protocol run by default
+
+> **Status:** The `specialist_check()` function and typed schemas are implemented. Protocol-level integration (automatic invocation during challenge/review) is planned for a future release. The `challenge` tool accepts `specialist_provider` but does not yet invoke it automatically.
 
 ## Choosing the Right Protocol
 

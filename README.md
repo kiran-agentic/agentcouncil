@@ -11,7 +11,7 @@ Two agents. Distinct roles. No echo chamber.
 
 AgentCouncil convenes Claude Code and an outside agent — each with a distinct role — to deliberate on problems. In brainstorm, both propose independently before seeing each other's work. In review, decide, and challenge, the outside agent evaluates, compares, or attacks without seeing Claude Code's internal reasoning. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
-**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, protocol-scoped Expert Witness specialist checks, resumable protocol state, and a CLI session inspector.
+**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, resumable protocol state, and a CLI session inspector. Expert Witness specialist checks and live Turn Stream events are available as building blocks but not yet wired into protocol execution.
 
 </div>
 
@@ -27,7 +27,7 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
 | "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
-| "Fix until clean" | `/review` (convergence) | Iterative review loop: findings → fix → re-review → verify |
+| "Fix until clean" | `review_loop` tool | Iterative review loop: findings → fix → re-review → verify |
 
 > **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
 
@@ -140,7 +140,7 @@ Every protocol run is persisted to a local journal. Inspect past sessions:
 agentcouncil inspect --list                    # List recent sessions
 agentcouncil inspect <session_id>              # View formatted transcript
 agentcouncil inspect <session_id> --json       # Raw JSON output
-agentcouncil inspect <session_id> --watch      # Stream live events
+agentcouncil inspect <session_id> --watch      # Poll for new events (requires event wiring)
 ```
 
 ## How It Works

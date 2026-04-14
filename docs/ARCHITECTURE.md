@@ -326,6 +326,8 @@ Append-only event log within each journal entry, with cursor-based retrieval:
 
 Event types: `turn_added`, `phase_transition`, `status_change`, `specialist_evidence`, `finding_status_change`.
 
+> **Note:** The Turn Stream API and storage are implemented, but protocol execution does not yet call `append_event()` during runs. Events can be appended programmatically; automatic event emission from protocol phases is planned for a future release.
+
 ### Resumable Protocol State
 
 Protocols can checkpoint at phase boundaries and resume from the last checkpoint:
@@ -359,7 +361,7 @@ Iterative review workflow that loops until findings are verified:
 
 ### Expert Witness
 
-Bounded specialist consultation for protocol sub-questions. A specialist agent receives only a targeted sub-question and minimal context slice (never the full debate), returns typed evaluative output, and the result is inserted as provenance-tagged advisory evidence.
+Bounded specialist consultation for protocol sub-questions. The `specialist.py` module provides `specialist_check()` and `make_specialist_turn()` as reusable building blocks. A specialist agent receives only a targeted sub-question and minimal context slice (never the full debate), returns typed evaluative output, and the result can be inserted as provenance-tagged advisory evidence.
 
 **Key properties:**
 - Generic over protocol-owned Pydantic artifact types (`ChallengeSpecialistAssessment`, `ReviewSpecialistFinding`, `DecideSpecialistEvaluation`)
@@ -367,6 +369,8 @@ Bounded specialist consultation for protocol sub-questions. A specialist agent r
 - Evidence is advisory — does not alter protocol truth unless adopted in synthesis with citation
 - One check per run by default, caller/protocol-controlled trigger
 - Graceful failure — returns `None` on error, protocol continues
+
+> **Note:** The specialist module and schemas are implemented, and `challenge_tool` accepts a `specialist_provider` parameter, but automatic specialist invocation during protocol execution is not yet wired. Callers can use `specialist_check()` directly via the library API. Protocol integration is planned for a future release.
 
 ### Blind Panel
 
