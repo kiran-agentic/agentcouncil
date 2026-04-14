@@ -302,7 +302,7 @@ class TranscriptMeta(BaseModel):
 
 ### Deliberation Journal
 
-Every completed protocol run is automatically persisted to `~/.agentcouncil/journal/{session_id}.json`. Journal entries contain the full transcript, artifact, provenance metadata, execution events, and optional checkpoint state.
+Every completed protocol run is automatically persisted to `~/.agentcouncil/journal/{session_id}.json`. Journal entries contain the full transcript, artifact, and provenance metadata. Optional fields include execution events (when appended programmatically) and checkpoint state (for resumable protocols).
 
 **Key properties:**
 - **Atomic writes** — temp file + `os.replace()` prevents partial writes on crash
@@ -393,7 +393,7 @@ CLI viewer for persisted journal entries:
 agentcouncil inspect <session_id>        # Formatted transcript with provenance
 agentcouncil inspect --list              # Recent sessions
 agentcouncil inspect <session_id> --json # Raw JSON
-agentcouncil inspect <session_id> --watch # Stream live events
+agentcouncil inspect <session_id> --watch # Poll for new events (requires event wiring)
 ```
 
 Renders protocol type, status, turns with actor identity/provider/model/phase/timestamp, independence markers, finding status progression, specialist evidence, and synthesis results.
