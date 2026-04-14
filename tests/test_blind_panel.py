@@ -253,3 +253,52 @@ async def test_blind_panel_single_agent_works():
     )
 
     assert result.artifact.status == "consensus"
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_transcript_has_final_output():
+    """BP-10: Final artifact includes synthesis output in transcript."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    agent1 = StubAdapter(["Proposal 1"])
+    lead = StubAdapter(["Lead proposal"])
+    synthesizer = StubAdapter([_negotiation_json(
+        recommended_direction="Combined caching approach",
+    )])
+
+    result = await brainstorm_panel(
+        brief=_valid_brief(),
+        outside_adapters=[agent1],
+        lead_adapter=lead,
+        synthesizer_adapter=synthesizer,
+    )
+
+    assert result.transcript.final_output is not None
+    assert "Combined caching approach" in result.transcript.final_output
+
+
+@pytest.mark.asyncio
+async def test_blind_panel_outside_labels_in_provenance():
+    """BP-05 extended: Outside labels appear in turn provenance."""
+    from agentcouncil.deliberation import brainstorm_panel
+    from agentcouncil.adapters import StubAdapter
+
+    agent1 = StubAdapter(["Proposal 1"])
+    agent2 = StubAdapter(["Proposal 2"])
+    lead = StubAdapter(["Lead proposal"])
+    synthesizer = StubAdapter([_negotiation_json()])
+
+    result = await brainstorm_panel(
+        brief=_valid_brief(),
+        outside_adapters=[agent1, agent2],
+        lead_adapter=lead,
+        synthesizer_adapter=synthesizer,
+        outside_labels=["codex", "ollama-local"],
+    )
+
+    proposal_turns = [t for t in result.transcript.exchanges if t.phase == "proposal"]
+    outside_turns = [t for t in proposal_turns if t.role == "outside"]
+    providers = [t.actor_provider for t in outside_turns]
+    assert "codex" in providers
+    assert "ollama-local" in providers

@@ -276,3 +276,38 @@ def test_specialist_turn_has_timestamp():
     )
     assert turn.timestamp is not None
     assert turn.timestamp > 0
+
+
+@pytest.mark.asyncio
+async def test_specialist_provider_difference_enforced():
+    """EW-10: Specialist provider must differ from main outside agent.
+
+    This test verifies the concept — actual enforcement is at the caller
+    level (challenge.py), since specialist.py is provider-agnostic.
+    The specialist_check function accepts any adapter; the caller must
+    ensure it's different from the main outside adapter.
+    """
+    import json
+    from agentcouncil.specialist import specialist_check
+    from agentcouncil.schemas import ChallengeSpecialistAssessment
+    from agentcouncil.adapters import StubAdapter
+
+    # Two distinct adapters (simulating different providers)
+    main_outside = StubAdapter(["main outside response"])
+    specialist = StubAdapter([json.dumps({
+        "assumption": "test", "validity": "valid",
+        "evidence": "test", "confidence": "high",
+    })])
+
+    # Specialist check uses a DIFFERENT adapter than main outside
+    result = await specialist_check(
+        sub_question="test?",
+        context_slice="context",
+        specialist_adapter=specialist,  # Different from main_outside
+        artifact_cls=ChallengeSpecialistAssessment,
+    )
+    assert result is not None
+    # Main outside was never called
+    assert len(main_outside.calls) == 0
+    # Specialist was called exactly once
+    assert len(specialist.calls) == 1

@@ -212,3 +212,27 @@ def test_inspect_list_empty(journal_dir):
     journal_dir.mkdir(parents=True, exist_ok=True)
     output = inspect_list()
     assert "no" in output.lower() or len(output) > 0
+
+
+def test_format_entry_shows_finding_status_progression(journal_dir):
+    """DI-04: Finding status progression displayed for convergence entries."""
+    from agentcouncil.inspector import format_entry
+
+    # Create an entry with convergence-style events showing status changes
+    entry = _make_journal_entry(
+        protocol_type="review",
+        transcript=Transcript(
+            input_prompt="test",
+            exchanges=[
+                TranscriptTurn(role="outside", content="Finding R-01: open", phase="convergence"),
+                TranscriptTurn(role="lead", content="Fixed R-01", phase="convergence"),
+                TranscriptTurn(role="outside", content="R-01 verified", phase="convergence"),
+            ],
+        ),
+    )
+    output = format_entry(entry)
+
+    assert "CONVERGENCE" in output
+    # Should show all convergence turns
+    assert "outside" in output.lower()
+    assert "lead" in output.lower()
