@@ -9,6 +9,7 @@ __all__ = [
     "ConsensusStatus",
     "ConsensusArtifact",
     "SourceRef",
+    "TurnPhase",
     "TranscriptTurn",
     "TranscriptMeta",
     "Transcript",
@@ -52,6 +53,10 @@ class ConsensusArtifact(BaseModel):
 T = TypeVar("T", bound=BaseModel)
 
 
+# TN-03: Phase labels for transcript turns
+TurnPhase = Literal["brief", "proposal", "exchange", "synthesis", "specialist", "convergence"]
+
+
 class SourceRef(BaseModel):
     """Reference to a source document, file, or URL."""
 
@@ -66,10 +71,22 @@ class TranscriptTurn(BaseModel):
     role: str  # "outside", "lead", "director"
     content: str
     source_refs: list[SourceRef] = Field(default_factory=list)
+    # TN-02: Turn-level provenance fields (all Optional for backward compat)
+    actor_id: Optional[str] = None
+    actor_provider: Optional[str] = None
+    actor_model: Optional[str] = None
+    phase: Optional[TurnPhase] = None
+    timestamp: Optional[float] = None
+    parent_turn_id: Optional[str] = None
 
 
 class TranscriptMeta(BaseModel):
-    """Backend provenance metadata for a deliberation run."""
+    """Backend provenance metadata for a deliberation run.
+
+    Deprecated: Envelope-level provenance is superseded by per-turn provenance
+    fields on TranscriptTurn (TN-02). This class remains for backward
+    compatibility but new code should use turn-level provenance instead.
+    """
 
     lead_backend: Optional[str] = None
     lead_model: Optional[str] = None
