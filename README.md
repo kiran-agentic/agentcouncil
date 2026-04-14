@@ -71,16 +71,33 @@ If you prefer to install from source instead of the plugin marketplace:
 ```bash
 git clone https://github.com/kiran-agentic/agentcouncil.git
 cd agentcouncil
-pip install -e .
 ```
 
-Then register the MCP server in your Claude Code project settings (`.claude/settings.json`):
+Then register the MCP server in your Claude Code project settings (`.claude/settings.json`). If you have `uv` installed (recommended, handles dependencies automatically):
 
 ```json
 {
   "mcpServers": {
     "agentcouncil": {
-      "command": "python3",
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/agentcouncil", "python", "-m", "agentcouncil.server"]
+    }
+  }
+}
+```
+
+Or with a virtual environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+```json
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "/path/to/agentcouncil/.venv/bin/python3",
       "args": ["-m", "agentcouncil.server"]
     }
   }
