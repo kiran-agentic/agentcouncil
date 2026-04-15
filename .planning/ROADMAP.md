@@ -318,7 +318,10 @@ Plans:
   2. Loading a persisted run and calling resume reconstructs the full artifact registry from `StageCheckpoint.artifact_snapshot` — no prior in-memory state needed
   3. Attempting to resume a run with `status=failed` raises an error with the failure reason; runs with `status=paused_for_approval` or `status=paused_for_revision` resume correctly
   4. Status transitions follow the declared state machine: `running` can advance to `paused_for_approval`, `paused_for_revision`, `completed`, or `failed` — no other transitions are valid
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 29-01-PLAN.md — TDD AutopilotRun models, persistence, state machine, resume, and __init__.py re-exports
 
 ### Phase 30: Linear Orchestrator Skeleton
 **Goal**: The orchestrator can sequence stub work stages end-to-end through the full pipeline, persisting state and enforcing gate transitions, before real workflow content is added
@@ -409,8 +412,8 @@ Plans:
 | 25. Documentation | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 26. Artifact Schemas | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
-| 28. Gate Normalization Layer | v2.0 | 1/1 | Complete   | 2026-04-15 |
-| 29. Autopilot Run State + Persistence | v2.0 | 0/? | Not started | - |
+| 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
+| 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Planned | - |
 | 30. Linear Orchestrator Skeleton | v2.0 | 0/? | Not started | - |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
@@ -418,4 +421,4 @@ Plans:
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 28 planned (1 plan, 1 wave)*
+*Last updated: 2026-04-15 — Phase 29 planned (1 plan, 1 wave)*
