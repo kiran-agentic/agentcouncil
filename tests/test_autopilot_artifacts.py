@@ -5,13 +5,26 @@ from pydantic import ValidationError
 
 from agentcouncil.autopilot.artifacts import (
     AcceptanceProbe,
+    BuildArtifact,
+    BuildEvidence,
     ClarificationPlan,
     CodebaseResearchBrief,
+    CommandEvidence,
+    CriterionVerification,
+    GateDecision,
     PlanArtifact,
     PlanTask,
+    ServiceEvidence,
+    ShipArtifact,
     SpecArtifact,
     SpecPrepArtifact,
+    VerificationEnvironment,
+    VerifyArtifact,
+    validate_build_lineage,
     validate_clarification_complete,
+    validate_plan_lineage,
+    validate_ship_lineage,
+    validate_verify_lineage,
 )
 
 
@@ -471,3 +484,475 @@ def test_plan_artifact_probe_valid_task_ref():
         acceptance_probes=[probe],
     )
     assert len(artifact.acceptance_probes) == 1
+
+
+# ---------------------------------------------------------------------------
+# Output-side model helper factories (plan 26-02)
+# ---------------------------------------------------------------------------
+
+
+def _make_valid_build_evidence(**overrides) -> BuildEvidence:
+    defaults = {
+        "task_id": "task-01",
+        "files_changed": ["src/main.py"],
+        "verification_notes": "Tests pass",
+    }
+    defaults.update(overrides)
+    return BuildEvidence(**defaults)
+
+
+def _make_valid_build(**overrides) -> BuildArtifact:
+    defaults = {
+        "build_id": "build-001",
+        "plan_id": "plan-001",
+        "spec_id": "spec-test",
+        "evidence": [_make_valid_build_evidence()],
+        "all_tests_passing": True,
+        "files_changed": ["src/main.py"],
+    }
+    defaults.update(overrides)
+    return BuildArtifact(**defaults)
+
+
+def _make_valid_command_evidence(**overrides) -> CommandEvidence:
+    defaults = {
+        "command": "pytest",
+        "cwd": "/app",
+        "exit_code": 0,
+        "duration_seconds": 1.5,
+    }
+    defaults.update(overrides)
+    return CommandEvidence(**defaults)
+
+
+def _make_valid_service_evidence(**overrides) -> ServiceEvidence:
+    defaults = {
+        "name": "postgres",
+        "start_command": "docker compose up -d db",
+        "status": "started",
+    }
+    defaults.update(overrides)
+    return ServiceEvidence(**defaults)
+
+
+def _make_valid_criterion_verification(**overrides) -> CriterionVerification:
+    defaults = {
+        "criterion_id": "ac-0",
+        "criterion_text": "Tests pass",
+        "status": "passed",
+        "verification_level": "unit",
+        "mock_policy": "forbidden",
+        "evidence_summary": "All tests green",
+    }
+    defaults.update(overrides)
+    return CriterionVerification(**defaults)
+
+
+def _make_valid_verify(**overrides) -> VerifyArtifact:
+    defaults = {
+        "verify_id": "verify-001",
+        "build_id": "build-001",
+        "plan_id": "plan-001",
+        "spec_id": "spec-test",
+        "test_environment": VerificationEnvironment(),
+        "criteria_verdicts": [_make_valid_criterion_verification()],
+        "overall_status": "passed",
+    }
+    defaults.update(overrides)
+    return VerifyArtifact(**defaults)
+
+
+def _make_valid_ship(**overrides) -> ShipArtifact:
+    defaults = {
+        "ship_id": "ship-001",
+        "verify_id": "verify-001",
+        "build_id": "build-001",
+        "plan_id": "plan-001",
+        "spec_id": "spec-test",
+        "branch_name": "feat/test",
+        "head_sha": "abc123",
+        "worktree_clean": True,
+        "tests_passing": True,
+        "acceptance_criteria_met": True,
+        "readiness_summary": "Ready",
+        "release_notes": "Initial",
+        "rollback_plan": "git revert HEAD",
+        "recommended_action": "ship",
+    }
+    defaults.update(overrides)
+    return ShipArtifact(**defaults)
+
+
+def _make_valid_gate_decision(**overrides) -> GateDecision:
+    defaults = {
+        "decision": "advance",
+        "protocol_type": "review",
+        "protocol_session_id": "sess-001",
+        "rationale": "All clear",
+    }
+    defaults.update(overrides)
+    return GateDecision(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# BuildEvidence tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_evidence_valid():
+    ev = _make_valid_build_evidence()
+    assert ev.task_id == "task-01"
+    assert ev.files_changed == ["src/main.py"]
+    assert ev.verification_notes == "Tests pass"
+    assert ev.test_results is None
+
+
+# ---------------------------------------------------------------------------
+# BuildArtifact tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_artifact_valid():
+    build = _make_valid_build()
+    assert build.build_id == "build-001"
+    assert len(build.evidence) == 1
+    assert build.all_tests_passing is True
+    assert build.commit_shas == []
+
+
+def test_build_artifact_empty_evidence():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_build(evidence=[])
+    assert "evidence" in str(exc_info.value)
+
+
+def test_build_artifact_json_roundtrip():
+    original = _make_valid_build(
+        commit_shas=["abc123", "def456"],
+        evidence=[
+            _make_valid_build_evidence(task_id="task-01", test_results="3 passed"),
+            _make_valid_build_evidence(task_id="task-02", files_changed=["src/b.py"]),
+        ],
+    )
+    json_str = original.model_dump_json()
+    restored = BuildArtifact.model_validate_json(json_str)
+    assert restored.model_dump() == original.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# VerificationEnvironment tests
+# ---------------------------------------------------------------------------
+
+
+def test_verification_environment_defaults():
+    env = VerificationEnvironment()
+    assert env.project_types == []
+    assert env.test_commands == []
+    assert env.dev_server_command is None
+    assert env.playwright_available is False
+    assert env.confidence == "medium"
+
+
+# ---------------------------------------------------------------------------
+# CommandEvidence tests
+# ---------------------------------------------------------------------------
+
+
+def test_command_evidence_valid():
+    cmd = _make_valid_command_evidence()
+    assert cmd.command == "pytest"
+    assert cmd.cwd == "/app"
+    assert cmd.exit_code == 0
+    assert cmd.duration_seconds == 1.5
+    assert cmd.stdout_tail == ""
+    assert cmd.stderr_tail == ""
+
+
+# ---------------------------------------------------------------------------
+# ServiceEvidence tests
+# ---------------------------------------------------------------------------
+
+
+def test_service_evidence_valid():
+    svc = _make_valid_service_evidence()
+    assert svc.name == "postgres"
+    assert svc.start_command == "docker compose up -d db"
+    assert svc.status == "started"
+    assert svc.health_check is None
+    assert svc.port is None
+    assert svc.logs_tail == ""
+
+
+# ---------------------------------------------------------------------------
+# CriterionVerification tests
+# ---------------------------------------------------------------------------
+
+
+def test_criterion_verification_passed():
+    cv = _make_valid_criterion_verification()
+    assert cv.criterion_id == "ac-0"
+    assert cv.status == "passed"
+    assert cv.verification_level == "unit"
+    assert cv.mock_policy == "forbidden"
+
+
+# ---------------------------------------------------------------------------
+# VerifyArtifact tests
+# ---------------------------------------------------------------------------
+
+
+def test_verify_artifact_all_passed():
+    verify = _make_valid_verify()
+    assert verify.verify_id == "verify-001"
+    assert verify.overall_status == "passed"
+    assert len(verify.criteria_verdicts) == 1
+
+
+def test_verify_artifact_passed_with_failed_criterion():
+    cv = _make_valid_criterion_verification(status="failed", failure_diagnosis="assertion error")
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_verify(criteria_verdicts=[cv], overall_status="passed")
+    assert "passed" in str(exc_info.value) or "ac-0" in str(exc_info.value)
+
+
+def test_verify_artifact_passed_with_blocked_criterion():
+    cv = _make_valid_criterion_verification(status="blocked", blocker_type="env-missing")
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_verify(criteria_verdicts=[cv], overall_status="passed")
+    assert "passed" in str(exc_info.value) or "ac-0" in str(exc_info.value)
+
+
+def test_verify_artifact_skipped_without_reason():
+    cv = _make_valid_criterion_verification(status="skipped")  # no skip_reason
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_verify(criteria_verdicts=[cv], overall_status="failed")
+    assert "skip_reason" in str(exc_info.value) or "skipped" in str(exc_info.value)
+
+
+def test_verify_artifact_skipped_with_reason():
+    cv = _make_valid_criterion_verification(status="skipped", skip_reason="not applicable for this build")
+    # overall_status=failed is fine when a criterion is skipped-with-reason
+    verify = _make_valid_verify(criteria_verdicts=[cv], overall_status="failed")
+    assert verify.overall_status == "failed"
+    assert verify.criteria_verdicts[0].status == "skipped"
+
+
+def test_verify_artifact_blocked_without_blocker_type():
+    cv = _make_valid_criterion_verification(status="blocked")  # no blocker_type
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_verify(criteria_verdicts=[cv], overall_status="blocked")
+    assert "blocker_type" in str(exc_info.value) or "blocked" in str(exc_info.value)
+
+
+def test_verify_artifact_retry_build_without_guidance():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_verify(
+            overall_status="failed",
+            retry_recommendation="retry_build",
+            # revision_guidance intentionally omitted
+        )
+    assert "revision_guidance" in str(exc_info.value) or "retry_build" in str(exc_info.value)
+
+
+def test_verify_artifact_json_roundtrip():
+    cmd = _make_valid_command_evidence(stdout_tail="3 passed", duration_seconds=2.3)
+    svc = _make_valid_service_evidence(port=5432, health_check="pg_isready")
+    cv = _make_valid_criterion_verification(
+        commands=[cmd],
+        services=[svc],
+        artifacts=["coverage.xml"],
+    )
+    original = VerifyArtifact(
+        verify_id="verify-json",
+        build_id="build-001",
+        plan_id="plan-001",
+        spec_id="spec-test",
+        test_environment=VerificationEnvironment(
+            project_types=["python"],
+            test_commands=["pytest"],
+            playwright_available=True,
+        ),
+        criteria_verdicts=[cv],
+        overall_status="passed",
+        generated_tests=["tests/test_new.py"],
+        coverage_gaps=["edge case X"],
+    )
+    json_str = original.model_dump_json()
+    restored = VerifyArtifact.model_validate_json(json_str)
+    assert restored.model_dump() == original.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# ShipArtifact tests
+# ---------------------------------------------------------------------------
+
+
+def test_ship_artifact_ship_valid():
+    ship = _make_valid_ship()
+    assert ship.ship_id == "ship-001"
+    assert ship.recommended_action == "ship"
+    assert ship.tests_passing is True
+
+
+def test_ship_artifact_ship_with_blockers():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_ship(blockers=["unresolved security issue"])
+    assert "blockers" in str(exc_info.value)
+
+
+def test_ship_artifact_ship_tests_not_passing():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_ship(tests_passing=False)
+    assert "tests_passing" in str(exc_info.value)
+
+
+def test_ship_artifact_ship_no_rollback():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_ship(rollback_plan="")
+    assert "rollback_plan" in str(exc_info.value)
+
+
+def test_ship_artifact_hold_valid():
+    ship = _make_valid_ship(
+        recommended_action="hold",
+        remaining_risks=["untested path under high load"],
+    )
+    assert ship.recommended_action == "hold"
+    assert len(ship.remaining_risks) == 1
+
+
+def test_ship_artifact_hold_no_reasons():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_ship(
+            recommended_action="hold",
+            remaining_risks=[],
+            blockers=[],
+        )
+    assert "hold" in str(exc_info.value) or "remaining_risks" in str(exc_info.value)
+
+
+def test_ship_artifact_json_roundtrip():
+    original = _make_valid_ship(
+        remaining_risks=["minor UX issue"],
+        evidence_refs=["verify-001", "build-001"],
+        commit_shas=["abc123"],
+    )
+    json_str = original.model_dump_json()
+    restored = ShipArtifact.model_validate_json(json_str)
+    assert restored.model_dump() == original.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# GateDecision tests
+# ---------------------------------------------------------------------------
+
+
+def test_gate_decision_advance_valid():
+    gate = _make_valid_gate_decision()
+    assert gate.decision == "advance"
+    assert gate.protocol_type == "review"
+    assert gate.revision_guidance is None
+
+
+def test_gate_decision_revise_without_guidance():
+    with pytest.raises(ValidationError) as exc_info:
+        _make_valid_gate_decision(decision="revise")
+    assert "revision_guidance" in str(exc_info.value) or "revise" in str(exc_info.value)
+
+
+def test_gate_decision_revise_with_guidance():
+    gate = _make_valid_gate_decision(
+        decision="revise",
+        revision_guidance="Address the auth bypass discovered in review",
+    )
+    assert gate.decision == "revise"
+    assert gate.revision_guidance is not None
+
+
+def test_gate_decision_json_roundtrip():
+    original = _make_valid_gate_decision(
+        decision="block",
+        protocol_type="challenge",
+        rationale="Critical security flaw found",
+    )
+    json_str = original.model_dump_json()
+    restored = GateDecision.model_validate_json(json_str)
+    assert restored.model_dump() == original.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Transition invariant helper tests
+# ---------------------------------------------------------------------------
+
+
+def test_validate_plan_lineage_match():
+    spec = _make_valid_spec()
+    plan = _make_valid_plan_artifact(spec_id="my-feature")
+    # Should not raise
+    validate_plan_lineage(plan, spec)
+
+
+def test_validate_plan_lineage_mismatch():
+    spec = _make_valid_spec(spec_id="spec-a")
+    plan = _make_valid_plan_artifact(spec_id="spec-b")
+    with pytest.raises(ValueError) as exc_info:
+        validate_plan_lineage(plan, spec)
+    assert "spec-b" in str(exc_info.value)
+    assert "spec-a" in str(exc_info.value)
+
+
+def test_validate_build_lineage_match():
+    plan = _make_valid_plan_artifact(plan_id="plan-001", spec_id="spec-test")
+    build = _make_valid_build(plan_id="plan-001", spec_id="spec-test")
+    # Should not raise
+    validate_build_lineage(build, plan)
+
+
+def test_validate_build_lineage_plan_mismatch():
+    plan = _make_valid_plan_artifact(plan_id="plan-001", spec_id="spec-test")
+    build = _make_valid_build(plan_id="plan-WRONG", spec_id="spec-test")
+    with pytest.raises(ValueError) as exc_info:
+        validate_build_lineage(build, plan)
+    assert "plan-WRONG" in str(exc_info.value)
+    assert "plan-001" in str(exc_info.value)
+
+
+def test_validate_build_lineage_spec_mismatch():
+    plan = _make_valid_plan_artifact(plan_id="plan-001", spec_id="spec-test")
+    build = _make_valid_build(plan_id="plan-001", spec_id="spec-WRONG")
+    with pytest.raises(ValueError) as exc_info:
+        validate_build_lineage(build, plan)
+    assert "spec-WRONG" in str(exc_info.value)
+    assert "spec-test" in str(exc_info.value)
+
+
+def test_validate_verify_lineage_match():
+    build = _make_valid_build(build_id="build-001", spec_id="spec-test")
+    verify = _make_valid_verify(build_id="build-001", spec_id="spec-test")
+    # Should not raise
+    validate_verify_lineage(verify, build)
+
+
+def test_validate_verify_lineage_mismatch():
+    build = _make_valid_build(build_id="build-001", spec_id="spec-test")
+    verify = _make_valid_verify(build_id="build-WRONG", spec_id="spec-test")
+    with pytest.raises(ValueError) as exc_info:
+        validate_verify_lineage(verify, build)
+    assert "build-WRONG" in str(exc_info.value)
+    assert "build-001" in str(exc_info.value)
+
+
+def test_validate_ship_lineage_match():
+    verify = _make_valid_verify(verify_id="verify-001", spec_id="spec-test")
+    ship = _make_valid_ship(verify_id="verify-001", spec_id="spec-test")
+    # Should not raise
+    validate_ship_lineage(ship, verify)
+
+
+def test_validate_ship_lineage_mismatch():
+    verify = _make_valid_verify(verify_id="verify-001", spec_id="spec-test")
+    ship = _make_valid_ship(verify_id="verify-WRONG", spec_id="spec-test")
+    with pytest.raises(ValueError) as exc_info:
+        validate_ship_lineage(ship, verify)
+    assert "verify-WRONG" in str(exc_info.value)
+    assert "verify-001" in str(exc_info.value)
