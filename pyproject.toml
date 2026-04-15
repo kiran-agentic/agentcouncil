@@ -21,6 +21,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "fastmcp>=3.2.3",
     "rich>=13.0",
+    "pyyaml>=6.0",
 ]
 
 [project.urls]
