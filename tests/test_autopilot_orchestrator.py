@@ -1503,3 +1503,696 @@ class TestRuleBasedRouter:
             f"Tier must be 3 after persisting promoted run, got {loaded.tier}"
         )
         assert loaded.tier_promoted_at is not None, "tier_promoted_at must be preserved"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for TestFailureHandling and TestDynamicGatePromotion
+# ---------------------------------------------------------------------------
+
+
+class _ExceptionThenAdvanceGate:
+    """Gate stub that raises Exception on first call, returns advance on second."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def __call__(self) -> GateDecision:
+        self.call_count += 1
+        if self.call_count == 1:
+            raise Exception("gate timeout")
+        return GateDecision(
+            decision="advance",
+            protocol_type="review_loop",
+            protocol_session_id="stub",
+            rationale="ok after retry",
+        )
+
+
+class _AlwaysExceptionGate:
+    """Gate stub that always raises Exception."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def __call__(self) -> GateDecision:
+        self.call_count += 1
+        raise Exception("gate timeout")
+
+
+def _make_registry_with_retry_policy(stage_name: str, retry_policy: str) -> dict:
+    """Return a registry copy where the given stage has a custom retry_policy."""
+    registry = load_default_registry()
+    entry = registry[stage_name]
+    raw = entry.manifest.model_dump()
+    raw["retry_policy"] = retry_policy
+    new_manifest = StageManifest(**raw)
+    registry[stage_name] = StageRegistryEntry(
+        manifest=new_manifest,
+        workflow_content=entry.workflow_content,
+    )
+    return registry
+
+
+# ---------------------------------------------------------------------------
+# TestFailureHandling — SAFE-05 retry policy and exhaustion behaviors
+# ---------------------------------------------------------------------------
+
+
+class TestFailureHandling:
+    """SAFE-05: Gate retry policy enforcement, exhaustion escalation, checkpoint resume."""
+
+    def test_gate_retry_once_on_exception(self, run_dir):
+        """Gate raises on first call, returns advance on second. With retry_policy='once', stage advances."""
+        # plan has review_loop gate — modify its retry_policy to "once"
+        registry = _make_registry_with_retry_policy("plan", "once")
+        runners = _make_stub_runners()
+
+        exception_then_advance = _ExceptionThenAdvanceGate()
+        gate_runners = {
+            "review_loop": exception_then_advance,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-once-advance", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        # Retry succeeded — run should complete
+        assert result.status == "completed", (
+            f"Expected completed after successful retry, got {result.status!r}"
+        )
+        # Gate was called at least twice (initial fail + retry)
+        assert exception_then_advance.call_count >= 2, (
+            f"Expected gate called at least twice, got {exception_then_advance.call_count}"
+        )
+
+    def test_gate_retry_none_no_retry(self, run_dir):
+        """Gate raises with retry_policy='none' — no retry, run transitions to paused_for_approval."""
+        # plan has review_loop gate — set retry_policy to "none"
+        registry = _make_registry_with_retry_policy("plan", "none")
+        runners = _make_stub_runners()
+
+        always_exception = _AlwaysExceptionGate()
+        gate_runners = {
+            "review_loop": always_exception,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-none-pauses", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval with retry_policy=none, got {result.status!r}"
+        )
+        # With retry_policy=none, gate should have been called exactly once
+        assert always_exception.call_count == 1, (
+            f"Expected gate called exactly once with retry_policy=none, got {always_exception.call_count}"
+        )
+        assert result.failure_reason is not None, "failure_reason must be set on gate failure"
+
+    def test_gate_retry_backend_fallback_uses_fallback_runner(self, run_dir):
+        """With retry_policy='backend_fallback', orchestrator calls fallback gate runner on exception."""
+        registry = _make_registry_with_retry_policy("plan", "backend_fallback")
+        runners = _make_stub_runners()
+
+        fallback_called = [False]
+
+        def fallback_gate() -> GateDecision:
+            fallback_called[0] = True
+            return GateDecision(
+                decision="advance",
+                protocol_type="review_loop",
+                protocol_session_id="fallback-stub",
+                rationale="fallback gate passed",
+            )
+
+        always_exception = _AlwaysExceptionGate()
+        gate_runners = {
+            "review_loop": always_exception,
+            "review_loop_fallback": fallback_gate,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-backend-fallback", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert fallback_called[0] is True, (
+            "Fallback gate runner must be called with retry_policy=backend_fallback"
+        )
+        assert result.status == "completed", (
+            f"Expected completed after fallback gate advance, got {result.status!r}"
+        )
+
+    def test_gate_retry_backend_fallback_no_fallback_registered(self, run_dir):
+        """retry_policy='backend_fallback' with no fallback runner — retries primary gate once."""
+        registry = _make_registry_with_retry_policy("plan", "backend_fallback")
+        runners = _make_stub_runners()
+
+        exception_then_advance = _ExceptionThenAdvanceGate()
+        gate_runners = {
+            "review_loop": exception_then_advance,
+            # No review_loop_fallback registered
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-backend-no-fallback", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        # No fallback: retries primary once — second call returns advance
+        assert result.status == "completed", (
+            f"Expected completed (primary retry succeeds), got {result.status!r}"
+        )
+        assert exception_then_advance.call_count >= 2, (
+            f"Expected primary gate called at least twice (retry), got {exception_then_advance.call_count}"
+        )
+
+    def test_exhausted_retries_pause_with_failure_reason(self, run_dir):
+        """Gate always raises, retry_policy='once'. After exhaustion, status=paused_for_approval and failure_reason set."""
+        registry = _make_registry_with_retry_policy("plan", "once")
+        runners = _make_stub_runners()
+
+        always_exception = _AlwaysExceptionGate()
+        gate_runners = {
+            "review_loop": always_exception,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-exhausted-pauses", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval after retry exhaustion, got {result.status!r}"
+        )
+        assert result.failure_reason is not None, "failure_reason must be set on exhaustion"
+        assert "plan" in result.failure_reason, (
+            f"failure_reason should mention stage name 'plan', got {result.failure_reason!r}"
+        )
+        assert "gate" in result.failure_reason.lower() or "review_loop" in result.failure_reason, (
+            f"failure_reason should mention gate info, got {result.failure_reason!r}"
+        )
+
+    def test_mid_pipeline_failure_has_checkpoints(self, run_dir):
+        """spec_prep and plan complete; build gate raises. Completed stages have artifact_snapshot."""
+        # Modify build's retry_policy to "none" so first exception causes immediate failure
+        registry = _make_registry_with_retry_policy("build", "none")
+        runners = _make_stub_runners()
+
+        always_exception = _AlwaysExceptionGate()
+        gate_runners = {
+            "review_loop": _AdvanceGate(),  # plan gate passes
+            "challenge": _AdvanceGate(),
+        }
+
+        # Override build gate to fail
+        class BuildFailGateRunners:
+            def __init__(self):
+                self.call_count = 0
+
+            def get_gate(self, gate_type):
+                if gate_type == "review_loop" and self.call_count == 0:
+                    # First review_loop call is for plan (advance)
+                    # But wait — we need to differentiate plan vs build gate calls
+                    pass
+
+        # Use a counter to fail only on build's gate call
+        # plan uses review_loop (call 1) → advance
+        # build uses review_loop (call 2) → exception
+        call_count = [0]
+
+        def selective_fail_gate() -> GateDecision:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call is plan gate — advance
+                return GateDecision(
+                    decision="advance",
+                    protocol_type="review_loop",
+                    protocol_session_id="stub",
+                    rationale="plan ok",
+                )
+            # Second call is build gate — raise
+            raise Exception("build gate timeout")
+
+        gate_runners_selective = {
+            "review_loop": selective_fail_gate,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners_selective,
+        )
+        run = _make_run(run_id="mid-pipeline-checkpoints", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval after build gate failure, got {result.status!r}"
+        )
+        # spec_prep and plan should be advanced with artifact_snapshot
+        for stage_name in ("spec_prep", "plan"):
+            cp = next((c for c in result.stages if c.stage_name == stage_name), None)
+            assert cp is not None, f"Missing checkpoint for {stage_name}"
+            assert cp.status == "advanced", (
+                f"Stage {stage_name!r} should be advanced, got {cp.status!r}"
+            )
+            assert cp.artifact_snapshot is not None, (
+                f"Stage {stage_name!r} should have artifact_snapshot populated"
+            )
+
+    def test_resume_after_gate_failure_continues_from_checkpoint(self, run_dir):
+        """After mid-pipeline gate failure, resume() reconstructs artifact_registry from checkpoints."""
+        # Block at build gate with retry_policy=none
+        registry = _make_registry_with_retry_policy("build", "none")
+        runners = _make_stub_runners()
+
+        call_count = [0]
+
+        def selective_fail_gate() -> GateDecision:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return GateDecision(
+                    decision="advance",
+                    protocol_type="review_loop",
+                    protocol_session_id="stub",
+                    rationale="plan ok",
+                )
+            raise Exception("build gate timeout")
+
+        gate_runners_fail = {
+            "review_loop": selective_fail_gate,
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners_fail,
+        )
+        run = _make_run(run_id="resume-after-failure", tier=2)
+        failed_run = orchestrator.run_pipeline(run)
+        assert failed_run.status == "paused_for_approval"
+
+        # Resume: reconstruct artifact registry from checkpoints
+        resumed_run, artifact_registry = resume("resume-after-failure")
+
+        # artifact_registry should have spec_prep and plan artifacts reconstructed
+        assert "spec_prep" in artifact_registry, (
+            "resume() must reconstruct spec_prep artifact from checkpoint"
+        )
+        assert "plan" in artifact_registry, (
+            "resume() must reconstruct plan artifact from checkpoint"
+        )
+
+        # Now complete the run with a passing build gate
+        registry2 = load_default_registry()
+        gate_runners_pass = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator2 = LinearOrchestrator(
+            registry=registry2,
+            runners=runners,
+            gate_runners=gate_runners_pass,
+        )
+        resumed_run.status = "running"  # type: ignore[assignment]
+        result = orchestrator2.run_pipeline(resumed_run, artifact_registry)
+        assert result.status == "completed", (
+            f"Expected completed after resume from gate failure, got {result.status!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestDynamicGatePromotion — SAFE-05 SC4: gate-outcome-driven tier promotion
+# ---------------------------------------------------------------------------
+
+
+def _make_challenge_not_ready_artifact():
+    """Create a valid ChallengeArtifact with readiness='not_ready'."""
+    from agentcouncil.schemas import ChallengeArtifact, FailureMode
+    return ChallengeArtifact(
+        readiness="not_ready",
+        summary="Challenge identified critical risks",
+        failure_modes=[
+            FailureMode(
+                id="fm-1",
+                assumption_ref="a-1",
+                description="Critical failure mode",
+                severity="critical",
+                impact="System unavailable",
+                confidence="high",
+                disposition="must_harden",
+            )
+        ],
+        next_action="Harden the system before proceeding",
+    )
+
+
+def _make_convergence_result_with_finding(severity: str):
+    """Create a ConvergenceResult with a Finding of the given severity."""
+    from agentcouncil.schemas import ConvergenceResult, Finding
+    return ConvergenceResult(
+        total_iterations=1,
+        exit_reason="all_verified",
+        final_verdict="pass",
+        final_findings=[
+            Finding(
+                id="f-1",
+                title="Security issue",
+                severity=severity,
+                impact="High impact",
+                description="Description of issue",
+                evidence="Code evidence",
+                confidence="high",
+                agreement="confirmed",
+                origin="outside",
+            )
+        ],
+    )
+
+
+def _make_review_artifact_with_finding(severity: str):
+    """Create a ReviewArtifact with a Finding of the given severity."""
+    from agentcouncil.schemas import ReviewArtifact, Finding
+    return ReviewArtifact(
+        verdict="pass",
+        summary="Review with finding",
+        findings=[
+            Finding(
+                id="f-1",
+                title="Security issue",
+                severity=severity,
+                impact="High impact",
+                description="Description of issue",
+                evidence="Code evidence",
+                confidence="high",
+                agreement="confirmed",
+                origin="outside",
+            )
+        ],
+        next_action="Address finding",
+    )
+
+
+class TestDynamicGatePromotion:
+    """SAFE-05 SC4: Tier promotion triggered by gate-outcome inspection."""
+
+    def test_challenge_not_ready_promotes_to_tier3(self, run_dir):
+        """Challenge gate returning not_ready promotes run.tier to 3."""
+        from agentcouncil.autopilot.normalizer import GateNormalizer
+        from agentcouncil.schemas import ChallengeArtifact, FailureMode
+
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        # Use a custom normalizer that produces 'block' for not_ready challenge
+        # The orchestrator should detect the raw artifact and promote
+        challenge_artifact = _make_challenge_not_ready_artifact()
+
+        # Inject a gate runner that makes the orchestrator "see" the not_ready artifact
+        # The test expects _maybe_promote_from_gate to fire on the raw artifact
+        # The challenge gate returns block (from not_ready normalization)
+        gate_call_count = [0]
+
+        def challenge_gate_not_ready() -> GateDecision:
+            gate_call_count[0] += 1
+            return GateDecision(
+                decision="block",
+                protocol_type="challenge",
+                protocol_session_id="stub-not-ready",
+                rationale="challenge not_ready",
+            )
+
+        # To test _maybe_promote_from_gate, we need the orchestrator to have access
+        # to the raw ChallengeArtifact. Since injected gate_runners return GateDecision
+        # directly, we set the _last_raw_artifact manually via a subclass approach.
+        # The plan says: implementation will store raw artifact on self._last_raw_artifact
+        # Tests expect run.tier == 3 after the gate fires with not_ready raw artifact.
+
+        # Use stub protocol path (no gate_runners injected for challenge) so the
+        # orchestrator uses its internal _run_gate stub which normalizes ChallengeArtifact
+        # For this test: start at verify stage with challenge gate override
+        # The stub challenge artifact in _run_gate has readiness="ready"
+        # We need readiness="not_ready" to trigger promotion
+
+        # Approach: patch _run_gate to store a not_ready artifact as last_raw_artifact
+        # The implementation must expose self._last_raw_artifact for _run_gate_with_retry
+        # to pass to _maybe_promote_from_gate
+
+        # Use a subclass that overrides _run_gate to inject the not_ready artifact
+        class _InjectNotReadyChallengeOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "challenge":
+                    self._last_raw_artifact = challenge_artifact
+                    # Normalize: not_ready -> block
+                    return GateDecision(
+                        decision="block",
+                        protocol_type="challenge",
+                        protocol_session_id="stub-not-ready",
+                        rationale="not_ready -> block",
+                    )
+                return super()._run_gate(gate_type)
+
+        # Start pipeline at verify with tier=3 to trigger challenge gate
+        run = _make_run(run_id="challenge-not-ready-promo", tier=3, current_stage="verify")
+        artifact_registry = {
+            "spec_prep": _stub_spec_prep_artifact(),
+            "plan": _stub_plan_artifact(),
+            "build": _stub_build_artifact(),
+        }
+        for checkpoint in run.stages:
+            if checkpoint.stage_name in ("spec_prep", "plan", "build"):
+                checkpoint.status = "advanced"
+
+        # tier already 3, so promotion is no-op — but test the not_ready path
+        # Reset tier to 2 to see promotion happen
+        run.tier = 2
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+        }
+        orchestrator = _InjectNotReadyChallengeOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run, artifact_registry=artifact_registry)
+
+        # After challenge gate with not_ready raw artifact, tier should be promoted to 3
+        assert result.tier == 3, (
+            f"Expected tier=3 after challenge not_ready, got {result.tier}"
+        )
+        assert result.tier_promoted_at is not None, (
+            "tier_promoted_at must be set after gate-triggered promotion"
+        )
+
+    def test_review_critical_finding_promotes_to_tier3(self, run_dir):
+        """Review gate with a critical finding promotes run.tier to 3."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        convergence_result = _make_convergence_result_with_finding("critical")
+
+        class _InjectCriticalFindingOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "review_loop":
+                    self._last_raw_artifact = convergence_result
+                    return GateDecision(
+                        decision="advance",
+                        protocol_type="review_loop",
+                        protocol_session_id="stub-critical",
+                        rationale="pass but has critical finding",
+                    )
+                return super()._run_gate(gate_type)
+
+        run = _make_run(run_id="review-critical-promo", tier=2)
+        gate_runners = {
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = _InjectCriticalFindingOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run)
+
+        assert result.tier == 3, (
+            f"Expected tier=3 after critical finding in review gate, got {result.tier}"
+        )
+        assert result.tier_promoted_at is not None
+
+    def test_review_high_finding_promotes_to_tier3(self, run_dir):
+        """Review gate with a high-severity finding promotes run.tier to 3."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        convergence_result = _make_convergence_result_with_finding("high")
+
+        class _InjectHighFindingOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "review_loop":
+                    self._last_raw_artifact = convergence_result
+                    return GateDecision(
+                        decision="advance",
+                        protocol_type="review_loop",
+                        protocol_session_id="stub-high",
+                        rationale="pass but has high finding",
+                    )
+                return super()._run_gate(gate_type)
+
+        run = _make_run(run_id="review-high-promo", tier=2)
+        gate_runners = {
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = _InjectHighFindingOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run)
+
+        assert result.tier == 3, (
+            f"Expected tier=3 after high finding in review gate, got {result.tier}"
+        )
+        assert result.tier_promoted_at is not None
+
+    def test_review_low_finding_no_promotion(self, run_dir):
+        """Review gate with only low/medium findings does NOT promote tier."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        convergence_result = _make_convergence_result_with_finding("low")
+
+        class _InjectLowFindingOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "review_loop":
+                    self._last_raw_artifact = convergence_result
+                    return GateDecision(
+                        decision="advance",
+                        protocol_type="review_loop",
+                        protocol_session_id="stub-low",
+                        rationale="pass, low finding only",
+                    )
+                return super()._run_gate(gate_type)
+
+        run = _make_run(run_id="review-low-no-promo", tier=2)
+        gate_runners = {
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = _InjectLowFindingOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run)
+
+        assert result.tier == 2, (
+            f"Expected tier=2 (no promotion for low finding), got {result.tier}"
+        )
+        assert result.tier_promoted_at is None, (
+            "tier_promoted_at must remain None for low/medium findings"
+        )
+
+    def test_promotion_persisted_before_next_stage(self, run_dir):
+        """After gate-triggered promotion, persist(run) is called with tier=3 BEFORE next stage runner fires."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        convergence_result = _make_convergence_result_with_finding("critical")
+
+        # Track the tier value seen by the build runner
+        tier_at_build_call = [None]
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance=None
+        ):
+            tier_at_build_call[0] = run.tier
+            return _stub_build_artifact()
+
+        runners["build"] = tracking_build_runner
+
+        class _InjectCriticalFindingPlanOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "review_loop":
+                    self._last_raw_artifact = convergence_result
+                    return GateDecision(
+                        decision="advance",
+                        protocol_type="review_loop",
+                        protocol_session_id="stub-plan-critical",
+                        rationale="plan pass but has critical finding",
+                    )
+                return super()._run_gate(gate_type)
+
+        run = _make_run(run_id="promo-before-next-stage", tier=2)
+        gate_runners = {
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = _InjectCriticalFindingPlanOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run)
+
+        # Build runner should see tier=3 (promoted by plan gate before build runs)
+        assert tier_at_build_call[0] == 3, (
+            f"Expected build runner to see tier=3 after plan gate promotion, got {tier_at_build_call[0]}"
+        )
+
+    def test_already_tier3_no_double_promotion(self, run_dir):
+        """If run.tier is already 3, gate-triggered promotion is a no-op (tier_promoted_at not overwritten)."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        convergence_result = _make_convergence_result_with_finding("critical")
+
+        original_promoted_at = "2026-01-01T00:00:00+00:00"
+
+        class _InjectCriticalFindingOrchestrator(LinearOrchestrator):
+            def _run_gate(self, gate_type: str) -> GateDecision:
+                if gate_type == "review_loop":
+                    self._last_raw_artifact = convergence_result
+                    return GateDecision(
+                        decision="advance",
+                        protocol_type="review_loop",
+                        protocol_session_id="stub-already-tier3",
+                        rationale="pass but critical finding",
+                    )
+                return super()._run_gate(gate_type)
+
+        # Run already at tier=3 with a pre-existing promotion timestamp
+        run = _make_run(run_id="already-tier3-no-double-promo", tier=3)
+        run.tier_promoted_at = original_promoted_at
+
+        gate_runners = {
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = _InjectCriticalFindingOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator.run_pipeline(run)
+
+        # Tier should remain 3, and tier_promoted_at should NOT be overwritten
+        assert result.tier == 3, f"Expected tier=3, got {result.tier}"
+        assert result.tier_promoted_at == original_promoted_at, (
+            f"tier_promoted_at must not be overwritten for already-tier3 run, "
+            f"got {result.tier_promoted_at!r}"
+        )
