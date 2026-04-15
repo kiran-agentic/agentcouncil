@@ -218,6 +218,7 @@ class LinearOrchestrator:
         self._normalizer = normalizer if normalizer is not None else GateNormalizer()
         self._max_revise = max_revise_iterations
         self._gate_runners = gate_runners or {}
+        self._build_retry_count: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -287,6 +288,83 @@ class LinearOrchestrator:
             # If run is no longer running (blocked/failed), stop
             if run.status != "running":
                 break
+
+            # VER-04: verify->build retry loop
+            # After verify stage completes, check for retry_build recommendation.
+            # If found, re-run build (with revision_guidance) then re-run verify.
+            # Capped at 2 retries (3 total build attempts) before escalating.
+            if current_stage == "verify":
+                verify_art = artifact_registry.get("verify")
+                retry_rec: Optional[str] = None
+                if hasattr(verify_art, "retry_recommendation"):
+                    retry_rec = verify_art.retry_recommendation
+                elif isinstance(verify_art, dict):
+                    retry_rec = verify_art.get("retry_recommendation")
+
+                if retry_rec == "retry_build":
+                    rev_guidance: Optional[str] = None
+                    if hasattr(verify_art, "revision_guidance"):
+                        rev_guidance = verify_art.revision_guidance
+                    elif isinstance(verify_art, dict):
+                        rev_guidance = verify_art.get("revision_guidance")
+
+                    if self._build_retry_count < 2:
+                        self._build_retry_count += 1
+                        # Re-run build stage with revision_guidance injected
+                        build_entry = self._registry.get("build")
+                        build_runner = self._runners.get("build", _default_stub_runner("build"))
+                        if build_entry is not None:
+                            # Wrap build runner so it receives rev_guidance on first call
+                            _captured_rev_guidance = rev_guidance
+                            _wrapped_first_call = [True]
+                            _orig_build_runner = build_runner
+
+                            def _build_with_guidance(
+                                _run: AutopilotRun,
+                                _reg: dict[str, Any],
+                                _guidance: Optional[str] = None,
+                            ) -> Any:
+                                if _wrapped_first_call[0]:
+                                    _wrapped_first_call[0] = False
+                                    return _orig_build_runner(_run, _reg, _captured_rev_guidance)
+                                return _orig_build_runner(_run, _reg, _guidance)
+
+                            # Update current_stage to build before re-running
+                            run.current_stage = "build"
+                            run.updated_at = time.time()
+                            persist(run)
+                            self._run_stage_with_gate(
+                                run, artifact_registry, "build", _build_with_guidance, build_entry,
+                                gate_type_override=None,
+                            )
+                            if run.status == "running":
+                                # Re-run verify after build
+                                run.current_stage = "verify"
+                                run.updated_at = time.time()
+                                persist(run)
+                                verify_entry = self._registry.get("verify")
+                                verify_runner = self._runners.get("verify", _default_stub_runner("verify"))
+                                if verify_entry is not None:
+                                    verify_gate_override: Optional[str] = None
+                                    if not self._should_run_challenge(run):
+                                        verify_gate_override = "none"
+                                    self._run_stage_with_gate(
+                                        run, artifact_registry, "verify", verify_runner, verify_entry,
+                                        gate_type_override=verify_gate_override,
+                                    )
+                                    # Re-evaluate: continue the while loop at verify
+                                    continue
+                    else:
+                        # Max retries exceeded — escalate to paused_for_approval
+                        validate_transition(run.status, "paused_for_approval")
+                        run.status = "paused_for_approval"  # type: ignore[assignment]
+                        run.failure_reason = (
+                            "Verify->build retry loop exhausted (2 retries). "
+                            "Manual intervention required."
+                        )
+                        run.updated_at = time.time()
+                        persist(run)
+                        break
 
             # Determine next stage from allowed_next
             allowed_next = entry.manifest.allowed_next
