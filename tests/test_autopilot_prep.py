@@ -441,3 +441,37 @@ class TestRunSpecPrep:
         registry = {"spec": spec}
         artifact = run_spec_prep(run, registry, None)
         assert isinstance(artifact.clarification, ClarificationPlan)
+
+
+# ---------------------------------------------------------------------------
+# Acceptance-criteria-compatible standalone test names
+# ---------------------------------------------------------------------------
+
+
+def test_codebase_research_returns_brief(tmp_path):
+    """Standalone: run_codebase_research returns CodebaseResearchBrief."""
+    spec = _make_spec()
+    brief = run_codebase_research(spec, project_root=tmp_path)
+    assert isinstance(brief, CodebaseResearchBrief)
+    assert brief.summary
+
+
+def test_clarification_budget_hard_max():
+    """Standalone: ClarificationPlan with > 5 questions raises ValidationError."""
+    with pytest.raises(ValidationError):
+        ClarificationPlan(blocking_questions=["q1", "q2", "q3", "q4", "q5", "q6"])
+
+
+def test_arch_council_trigger_cross_module():
+    """Standalone: should_trigger_architecture_council for cross-module files."""
+    spec = _make_spec(target_files=["backend/api.py", "frontend/app.ts"])
+    brief = _make_brief()
+    assert should_trigger_architecture_council(spec, brief) is True
+
+
+def test_readiness_check_success():
+    """Standalone: check_spec_readiness succeeds for well-formed spec."""
+    spec = _make_spec(verification_hints=["Run pytest"])
+    brief = _make_brief(test_commands=["python3 -m pytest"])
+    clarification = ClarificationPlan()
+    assert check_spec_readiness(spec, brief, clarification) is None
