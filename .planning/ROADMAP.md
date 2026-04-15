@@ -290,7 +290,10 @@ Plans:
   2. A manifest referencing an unknown artifact type or a non-existent stage in `allowed_next` causes the loader to raise a descriptive error at startup — not at runtime
   3. A valid manifest with all required fields produces a registry entry accessible by stage name that includes both the parsed manifest and loaded workflow markdown
   4. The five default workflow directories (spec_prep, plan, build, verify, ship) each have a valid manifest that passes loader validation
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 27-01-PLAN.md — Manifest schema model, loader, five default manifests, and tests
 
 ### Phase 28: Gate Normalization Layer
 **Goal**: Any protocol output can be uniformly translated to an advance/revise/block decision so the orchestrator never branches on protocol type
@@ -401,8 +404,8 @@ Plans:
 | 23. Skill Unification | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 24. Auto-Fallback + Backward Compat | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 25. Documentation | v1.4 | 2/2 | Complete | 2026-04-13 |
-| 26. Artifact Schemas | v2.0 | 2/2 | Complete   | 2026-04-15 |
-| 27. Manifest Schema + Loader | v2.0 | 0/? | Not started | - |
+| 26. Artifact Schemas | v2.0 | 2/2 | Complete    | 2026-04-15 |
+| 27. Manifest Schema + Loader | v2.0 | 0/1 | Not started | - |
 | 28. Gate Normalization Layer | v2.0 | 0/? | Not started | - |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/? | Not started | - |
 | 30. Linear Orchestrator Skeleton | v2.0 | 0/? | Not started | - |
@@ -412,4 +415,4 @@ Plans:
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 26 planned (2 plans, 2 waves)*
+*Last updated: 2026-04-15 — Phase 27 planned (1 plan, 1 wave)*
