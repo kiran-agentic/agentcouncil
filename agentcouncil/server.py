@@ -1174,6 +1174,8 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
     import uuid as _uuid
 
     target_files = target_files or []
+    # Clamp tier to valid range (FM-06: unconstrained tier escapes challenge gating)
+    tier = max(1, min(3, tier))
     # Validate spec via SpecArtifact model (include target_files for SAFE-03 classification)
     spec = SpecArtifact(spec_id=spec_id, title=title, objective=objective,
                         requirements=requirements, acceptance_criteria=acceptance_criteria,

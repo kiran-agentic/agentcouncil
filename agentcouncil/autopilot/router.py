@@ -60,7 +60,9 @@ def classify_run(spec: "SpecArtifact", requested_tier: int = 2) -> tuple[int, st
                 return 3, (
                     f"target_files contains sensitive path: {path!r} matches pattern {pattern!r}"
                 )
-    return requested_tier, "no sensitive paths detected in target_files"
+    # Clamp to valid tier range (FM-06)
+    clamped = max(1, min(3, requested_tier))
+    return clamped, "no sensitive paths detected in target_files"
 
 
 # ---------------------------------------------------------------------------

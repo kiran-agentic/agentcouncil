@@ -33,16 +33,19 @@ __all__ = ["run_verify"]
 
 
 def run_command(cmd: str, cwd: str, timeout: int = 60) -> CommandEvidence:
-    """Execute a shell command and capture structured evidence (VER-02).
+    """Execute a command and capture structured evidence (VER-02).
 
-    Uses real subprocess execution — not mocked at this level.
+    Uses subprocess with shell=False (FM-05: prevent command injection via
+    AcceptanceProbe.command_hint). Commands are split via shlex.split().
     Captures stdout_tail and stderr_tail (last 2000 chars each).
     """
+    import shlex
+
     start = time.monotonic()
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
+            shlex.split(cmd),
+            shell=False,
             cwd=cwd,
             capture_output=True,
             text=True,
