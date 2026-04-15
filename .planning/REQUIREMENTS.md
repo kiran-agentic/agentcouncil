@@ -57,10 +57,10 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 
 ### Workflow Content
 
-- [ ] **WORK-01**: Vendored agent-skills workflows (plan, build, ship) with MIT attribution and editorial adaptation
-- [ ] **WORK-02**: AgentCouncil-native spec_prep workflow implementing research-first questioning
-- [ ] **WORK-03**: AgentCouncil-native verify workflow implementing 5-level testing pyramid
-- [ ] **WORK-04**: Agent-skills repo (https://github.com/addyosmani/agent-skills) used as standing reference throughout all phases
+- [x] **WORK-01**: Vendored agent-skills workflows (plan, build, ship) with MIT attribution and editorial adaptation
+- [x] **WORK-02**: AgentCouncil-native spec_prep workflow implementing research-first questioning
+- [x] **WORK-03**: AgentCouncil-native verify workflow implementing 5-level testing pyramid
+- [x] **WORK-04**: Agent-skills repo (https://github.com/addyosmani/agent-skills) used as standing reference throughout all phases
 
 ## Future Requirements
 
@@ -127,10 +127,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERS-02 | Phase 29 | Complete |
 | PERS-03 | Phase 31 | Complete |
 | PERS-04 | Phase 30 | Complete |
-| WORK-01 | Phase 31 | Pending |
-| WORK-02 | Phase 31 | Pending |
-| WORK-03 | Phase 31 | Pending |
-| WORK-04 | Phase 31 | Pending |
+| WORK-01 | Phase 31 | Complete |
+| WORK-02 | Phase 31 | Complete |
+| WORK-03 | Phase 31 | Complete |
+| WORK-04 | Phase 31 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 28 total
