@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 30-01-PLAN.md
-last_updated: "2026-04-15T08:26:59.026Z"
+stopped_at: Completed 30-02-PLAN.md
+last_updated: "2026-04-15T08:33:28.681Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 7
   percent: 0
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 30 (linear-orchestrator-skeleton) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 30
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-04-15
 
 ```
@@ -68,6 +68,8 @@ Recent decisions affecting current work:
 - [Phase 29-autopilot-run-state-+-persistence]: validate_transition() enforces running as only state with outgoing transitions; all paused/terminal states are sinks
 - [Phase 30]: [30-01] Challenge gate is conditional via gate_type_override: verify default_gate=challenge is overridden to none for tier=2 non-external runs
 - [Phase 30]: [30-01] Injectable gate_runners dict used for test isolation — avoids patching internal methods
+- [Phase 30]: [30-02] autopilot_resume bypasses validate_transition when resetting paused run to running — paused states are terminal sinks per the state machine design
+- [Phase 30]: [30-02] ConvergenceResult stub corrected: exit_reason='all_verified' and total_iterations=1 to match schema
 
 ### Pending Todos
 
@@ -79,6 +81,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T08:26:59.024Z
-Stopped at: Completed 30-01-PLAN.md
+Last session: 2026-04-15T08:33:28.678Z
+Stopped at: Completed 30-02-PLAN.md
 Resume file: None

@@ -336,8 +336,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 30-01-PLAN.md — TDD LinearOrchestrator: stub stages, gate loop, conditional challenge, revise/block
-- [ ] 30-02-PLAN.md — MCP tools (autopilot_prepare/start/status/resume) + package re-exports
+- [x] 30-01-PLAN.md — TDD LinearOrchestrator: stub stages, gate loop, conditional challenge, revise/block
+- [x] 30-02-PLAN.md — MCP tools (autopilot_prepare/start/status/resume) + package re-exports
 
 ### Phase 31: Workflows + Spec Prep + Verify
 **Goal**: Real execution recipes are vendored and both spec_prep and verify stages produce their full typed artifacts with working implementation logic
@@ -418,7 +418,7 @@ Plans:
 | 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
-| 30. Linear Orchestrator Skeleton | v2.0 | 0/2 | Planning    | - |
+| 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete   | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
