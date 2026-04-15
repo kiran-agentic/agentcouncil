@@ -50,8 +50,8 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 
 ### Persistence & Delivery
 
-- [ ] **PERS-01**: AutopilotRun state persisted to ~/.agentcouncil/autopilot/{run_id}.json with atomic writes
-- [ ] **PERS-02**: Resume from paused_for_approval and paused_for_revision with artifact reconstruction
+- [x] **PERS-01**: AutopilotRun state persisted to ~/.agentcouncil/autopilot/{run_id}.json with atomic writes
+- [x] **PERS-02**: Resume from paused_for_approval and paused_for_revision with artifact reconstruction
 - [ ] **PERS-03**: Ship produces structured readiness packet with branch/SHA, verification status, release notes, rollback plan
 - [ ] **PERS-04**: MCP tools: autopilot_prepare, autopilot_start, autopilot_status, autopilot_resume
 
@@ -123,8 +123,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAFE-03 | Phase 33 | Pending |
 | SAFE-04 | Phase 33 | Pending |
 | SAFE-05 | Phase 34 | Pending |
-| PERS-01 | Phase 29 | Pending |
-| PERS-02 | Phase 29 | Pending |
+| PERS-01 | Phase 29 | Complete |
+| PERS-02 | Phase 29 | Complete |
 | PERS-03 | Phase 31 | Pending |
 | PERS-04 | Phase 30 | Pending |
 | WORK-01 | Phase 31 | Pending |

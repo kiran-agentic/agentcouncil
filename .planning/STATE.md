@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 28-01-PLAN.md
-last_updated: "2026-04-15T07:56:55.556Z"
-last_activity: 2026-04-15 -- Phase 29 execution started
+status: verifying
+stopped_at: Completed 29-01-PLAN.md
+last_updated: "2026-04-15T08:01:22.836Z"
+last_activity: 2026-04-15
 progress:
   total_phases: 9
-  completed_phases: 3
-  total_plans: 5
-  completed_plans: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 3
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Independence before convergence — agents must think independently before seeing each other's proposals
-**Current focus:** Phase 29 — autopilot-run-state-+-persistence
+**Current focus:** Phase 28 — gate-normalization-layer
 
 ## Current Position
 
-Phase: 29 (autopilot-run-state-+-persistence) — EXECUTING
+Phase: 28 (gate-normalization-layer) — EXECUTING
 Plan: 1 of 1
-Status: Executing Phase 29
-Last activity: 2026-04-15 -- Phase 29 execution started
+Status: Phase complete — ready for verification
+Last activity: 2026-04-15
 
 ```
 Progress: [          ] 0% (0/9 phases)
@@ -63,6 +63,9 @@ Recent decisions affecting current work:
 - [Phase 26-artifact-schemas]: Transition lineage helpers are standalone functions not model validators — cross-artifact checks are orchestrator-layer concern
 - [Phase 28]: GateNormalizer uses top-level try/except to guarantee block decisions on all error paths, never raises
 - [Phase 28]: ConsensusArtifact.status compared as string literals (not enum members) due to use_enum_values=True
+- [Phase 29-autopilot-run-state-+-persistence]: AutopilotRun uses use_enum_values=True — status always string literal, never enum member
+- [Phase 29-autopilot-run-state-+-persistence]: resume() is pure function returning (run, registry) tuple — no mutation, orchestrator decides whether to update status
+- [Phase 29-autopilot-run-state-+-persistence]: validate_transition() enforces running as only state with outgoing transitions; all paused/terminal states are sinks
 
 ### Pending Todos
 
@@ -74,6 +77,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T07:40:29.787Z
-Stopped at: Completed 28-01-PLAN.md
+Last session: 2026-04-15T08:01:22.834Z
+Stopped at: Completed 29-01-PLAN.md
 Resume file: None
