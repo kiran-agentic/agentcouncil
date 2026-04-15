@@ -816,3 +816,200 @@ class TestMCPTools:
         from agentcouncil.server import autopilot_resume_tool
         result = autopilot_resume_tool(run_id="resume-test")
         assert result["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# TestVerifyRetryLoop — VER-04: verify->build retry loop
+# ---------------------------------------------------------------------------
+
+
+def _make_failed_verify_artifact(retry_recommendation: str = "retry_build") -> VerifyArtifact:
+    """Return a VerifyArtifact with overall_status=failed and retry_recommendation set."""
+    return VerifyArtifact(
+        verify_id="verify-fail",
+        build_id="build-1",
+        plan_id="plan-1",
+        spec_id="test-spec",
+        test_environment=VerificationEnvironment(),
+        criteria_verdicts=[
+            CriterionVerification(
+                criterion_id="ac-0",
+                criterion_text="c",
+                status="failed",
+                verification_level="unit",
+                mock_policy="not_applicable",
+                evidence_summary="test failed",
+                failure_diagnosis="Import error in module",
+                revision_guidance="Fix the import",
+            )
+        ],
+        overall_status="failed",
+        retry_recommendation=retry_recommendation,
+        revision_guidance="Fix the import error before retrying build",
+    )
+
+
+class TestVerifyRetryLoop:
+    """VER-04: verify->build retry loop in LinearOrchestrator."""
+
+    def test_retry_loop_reruns_build(self, run_dir):
+        """When verify returns retry_recommendation=retry_build, build runner is called again."""
+        registry = _make_test_registry()
+
+        build_call_args = []
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            build_call_args.append(guidance)
+            return _stub_build_artifact()
+
+        # First verify call returns retry_build; second returns passed
+        verify_call_count = [0]
+
+        def verify_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            verify_call_count[0] += 1
+            if verify_call_count[0] == 1:
+                return _make_failed_verify_artifact("retry_build")
+            return _stub_verify_artifact()
+
+        runners = _make_stub_runners()
+        runners["build"] = tracking_build_runner
+        runners["verify"] = verify_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-reruns-build", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        # build should have been called twice: initial + after retry
+        assert len(build_call_args) >= 2, (
+            f"Expected build runner called at least twice, got {len(build_call_args)} calls"
+        )
+        assert result.status == "completed", (
+            f"Expected completed after successful retry, got {result.status!r}"
+        )
+
+    def test_retry_loop_max_retries(self, run_dir):
+        """After 2 retries, orchestrator sets status=paused_for_approval."""
+        registry = _make_test_registry()
+
+        # Verify always returns retry_build (exhausts retries)
+        def always_fail_verify(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            return _make_failed_verify_artifact("retry_build")
+
+        runners = _make_stub_runners()
+        runners["verify"] = always_fail_verify
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="retry-max-retries", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval after max retries, got {result.status!r}"
+        )
+        assert result.failure_reason is not None
+        assert "retry loop exhausted" in result.failure_reason, (
+            f"Expected failure_reason to mention retry loop exhausted, got {result.failure_reason!r}"
+        )
+
+    def test_no_retry_when_passed(self, run_dir):
+        """When verify passes (retry_recommendation=none), build is called exactly once."""
+        registry = _make_test_registry()
+
+        build_call_count = [0]
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            build_call_count[0] += 1
+            return _stub_build_artifact()
+
+        runners = _make_stub_runners()
+        runners["build"] = tracking_build_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="no-retry-when-passed", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert build_call_count[0] == 1, (
+            f"Expected build runner called exactly once, got {build_call_count[0]}"
+        )
+        assert result.status == "completed"
+
+    def test_revision_guidance_passed_to_build(self, run_dir):
+        """revision_guidance from VerifyArtifact is passed to build runner on re-run."""
+        registry = _make_test_registry()
+
+        build_call_guidances = []
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            build_call_guidances.append(guidance)
+            return _stub_build_artifact()
+
+        # First verify fails with specific revision_guidance
+        verify_call_count = [0]
+
+        def verify_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            verify_call_count[0] += 1
+            if verify_call_count[0] == 1:
+                return _make_failed_verify_artifact("retry_build")
+            return _stub_verify_artifact()
+
+        runners = _make_stub_runners()
+        runners["build"] = tracking_build_runner
+        runners["verify"] = verify_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="revision-guidance-to-build", tier=2)
+        orchestrator.run_pipeline(run)
+
+        # First build call has no guidance, second has revision_guidance from verify artifact
+        assert len(build_call_guidances) >= 2, (
+            f"Expected at least 2 build calls, got {len(build_call_guidances)}"
+        )
+        assert build_call_guidances[0] is None, (
+            f"First build call should have no guidance, got {build_call_guidances[0]!r}"
+        )
+        assert build_call_guidances[1] == "Fix the import error before retrying build", (
+            f"Second build call should have revision_guidance, got {build_call_guidances[1]!r}"
+        )
