@@ -1,0 +1,11 @@
+stage_name: verify
+version: "1.0"
+stage_type: work
+input_artifact: BuildArtifact
+output_artifact: VerifyArtifact
+default_gate: challenge
+side_effect_level: local
+retry_policy: once
+approval_required: false
+allowed_next:
+  - ship

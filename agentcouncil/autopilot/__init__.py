@@ -1,4 +1,6 @@
 from agentcouncil.autopilot.artifacts import *  # noqa: F401, F403
-from agentcouncil.autopilot.artifacts import __all__  # noqa: F401
+from agentcouncil.autopilot.artifacts import __all__ as _artifacts_all  # noqa: F401
+from agentcouncil.autopilot.loader import *  # noqa: F401, F403
+from agentcouncil.autopilot.loader import __all__ as _loader_all  # noqa: F401
 
-__all__ = __all__
+__all__ = [*_artifacts_all, *_loader_all]

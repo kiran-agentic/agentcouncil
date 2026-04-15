@@ -1,0 +1,11 @@
+stage_name: plan
+version: "1.0"
+stage_type: work
+input_artifact: SpecPrepArtifact
+output_artifact: PlanArtifact
+default_gate: review_loop
+side_effect_level: none
+retry_policy: once
+approval_required: false
+allowed_next:
+  - build

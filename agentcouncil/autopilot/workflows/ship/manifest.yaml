@@ -1,0 +1,10 @@
+stage_name: ship
+version: "1.0"
+stage_type: work
+input_artifact: VerifyArtifact
+output_artifact: ShipArtifact
+default_gate: none
+side_effect_level: local
+retry_policy: none
+approval_required: false
+allowed_next: []
