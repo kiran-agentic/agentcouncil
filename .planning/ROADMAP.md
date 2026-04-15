@@ -397,7 +397,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 34-01-PLAN.md — TDD failure handling: retry policy, escalation, partial checkpoints, gate-triggered promotion
+- [x] 34-01-PLAN.md — TDD failure handling: retry policy, escalation, partial checkpoints, gate-triggered promotion
 
 ## Progress
 
@@ -436,7 +436,7 @@ Plans:
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
 | 32. Approval Boundary | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 33. Rule-Based Router | v2.0 | 1/1 | Complete    | 2026-04-15 |
-| 34. Failure Handling + Dynamic Promotion | v2.0 | 0/1 | Not started | - |
+| 34. Failure Handling + Dynamic Promotion | v2.0 | 1/1 | Complete   | 2026-04-15 |
 
 ---
 *Last updated: 2026-04-15 — Phase 33 planned (1 plan, 1 wave)*

@@ -46,7 +46,7 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 - [x] **SAFE-02**: Approval boundary blocks external side effects pending human approval
 - [x] **SAFE-03**: Rule-based router classifies stages by declared intent (target_files, side_effect_level)
 - [x] **SAFE-04**: Dynamic tier promotion when sensitive files detected mid-execution (sticky for remainder of run)
-- [ ] **SAFE-05**: Failure handling with retry policy, escalation, and partial completion checkpoints
+- [x] **SAFE-05**: Failure handling with retry policy, escalation, and partial completion checkpoints
 
 ### Persistence & Delivery
 
@@ -122,7 +122,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAFE-02 | Phase 32 | Complete |
 | SAFE-03 | Phase 33 | Complete |
 | SAFE-04 | Phase 33 | Complete |
-| SAFE-05 | Phase 34 | Pending |
+| SAFE-05 | Phase 34 | Complete |
 | PERS-01 | Phase 29 | Complete |
 | PERS-02 | Phase 29 | Complete |
 | PERS-03 | Phase 31 | Complete |
