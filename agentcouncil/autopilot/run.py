@@ -98,6 +98,7 @@ class AutopilotRun(BaseModel):
     tier: int
     tier_promoted_at: Optional[str] = None
     tier_classification_reason: Optional[str] = None
+    spec_target_files: list[str] = Field(default_factory=list)
     stages: list[StageCheckpoint]
     artifact_registry: dict[str, dict] = Field(default_factory=dict)
     child_session_ids: list[str] = Field(default_factory=list)

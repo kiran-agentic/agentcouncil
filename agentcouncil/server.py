@@ -42,6 +42,7 @@ from agentcouncil.autopilot.artifacts import SpecArtifact
 from agentcouncil.autopilot.prep import run_spec_prep
 from agentcouncil.autopilot.verify import run_verify
 from agentcouncil.autopilot.ship import run_ship
+from agentcouncil.autopilot.router import classify_run
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
@@ -1163,17 +1164,23 @@ def journal_get_tool(session_id: str) -> dict:
 @mcp.tool(name="autopilot_prepare")
 def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
                             requirements: list[str], acceptance_criteria: list[str],
-                            tier: int = 2) -> dict:
-    """Initialize an autopilot run: validate spec, create run state, persist to disk.
+                            tier: int = 2, target_files: list[str] = []) -> dict:
+    """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
 
     Call this before autopilot_start. Returns a run_id to use with other tools.
+    Applies SAFE-03 rule-based tier classification from target_files before execution begins.
     """
     import time as _time
     import uuid as _uuid
 
-    # Validate spec via SpecArtifact model
+    # Validate spec via SpecArtifact model (include target_files for SAFE-03 classification)
     spec = SpecArtifact(spec_id=spec_id, title=title, objective=objective,
-                        requirements=requirements, acceptance_criteria=acceptance_criteria)
+                        requirements=requirements, acceptance_criteria=acceptance_criteria,
+                        target_files=target_files)
+
+    # SAFE-03: Classify run tier from target_files before execution begins.
+    # classify_run only promotes, never demotes — requested tier is respected.
+    computed_tier, tier_reason = classify_run(spec, requested_tier=tier)
 
     run_id = f"run-{_uuid.uuid4().hex[:12]}"
     stages = [
@@ -1182,11 +1189,20 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
     ]
     run = AutopilotRun(
         run_id=run_id, spec_id=spec_id, status="running",
-        current_stage="spec_prep", tier=tier, stages=stages,
+        current_stage="spec_prep", tier=computed_tier,
+        tier_classification_reason=tier_reason,
+        spec_target_files=target_files,
+        stages=stages,
         started_at=_time.time(), updated_at=_time.time(),
     )
     persist(run)
-    return {"run_id": run.run_id, "status": run.status, "current_stage": run.current_stage, "tier": run.tier}
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "current_stage": run.current_stage,
+        "tier": run.tier,
+        "tier_classification_reason": run.tier_classification_reason,
+    }
 
 
 @mcp.tool(name="autopilot_start")

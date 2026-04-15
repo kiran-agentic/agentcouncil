@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
@@ -1288,3 +1289,217 @@ class TestApprovalBoundary:
         assert build_call_count[0] >= 1, (
             f"Build runner must fire during second (resumed) run, got call_count={build_call_count[0]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestRuleBasedRouter — SAFE-03 and SAFE-04 integration
+# ---------------------------------------------------------------------------
+
+
+class TestRuleBasedRouter:
+    """Integration tests for rule-based tier router and dynamic tier promotion.
+
+    SAFE-03: classify_run assigns tier=3 for sensitive target_files before execution.
+    SAFE-04: _maybe_promote_tier promotes tier when BuildArtifact.files_changed contains
+             undeclared sensitive paths.
+    """
+
+    def test_tier3_assigned_for_sensitive_target_files(self, run_dir):
+        """Run with spec_target_files=["src/auth/x.py"] should trigger challenge gate (tier=3)."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        challenge_called = [False]
+
+        def tracking_challenge_gate() -> GateDecision:
+            challenge_called[0] = True
+            return GateDecision(
+                decision="advance",
+                protocol_type="challenge",
+                protocol_session_id="stub",
+                rationale="ok",
+            )
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": tracking_challenge_gate,
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        # Set tier=3 (already classified via classify_run) with auth target_files
+        run = _make_run(run_id="router-tier3-run", tier=3)
+        run.spec_target_files = ["src/auth/x.py"]
+
+        result = orchestrator.run_pipeline(run)
+
+        # tier=3 triggers challenge gate (ORCH-05)
+        assert result.tier == 3
+        assert orchestrator._should_run_challenge(result) is True
+
+    def test_tier_promotion_on_undeclared_sensitive_build(self, run_dir):
+        """Build returning files_changed with undeclared permissions/ path should promote tier."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        # Build runner that returns a BuildArtifact with an undeclared sensitive file
+        def sensitive_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ) -> BuildArtifact:
+            return BuildArtifact(
+                build_id="build-promo",
+                plan_id="plan-1",
+                spec_id="test-spec",
+                evidence=[
+                    BuildEvidence(
+                        task_id="t1",
+                        files_changed=["src/permissions/roles.py"],
+                        verification_notes="built",
+                    )
+                ],
+                all_tests_passing=True,
+                files_changed=["src/permissions/roles.py"],
+            )
+
+        runners["build"] = sensitive_build_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        # Start at tier=2 with no sensitive target_files declared
+        run = _make_run(run_id="router-promo-run", tier=2)
+        run.spec_target_files = ["src/main.py"]  # no sensitive paths declared
+
+        result = orchestrator.run_pipeline(run)
+
+        assert result.tier == 3, (
+            f"Expected tier promoted to 3 after undeclared permissions/ file, got {result.tier}"
+        )
+        assert result.tier_promoted_at is not None, (
+            "tier_promoted_at must be set after promotion"
+        )
+
+    def test_no_promotion_when_files_declared(self, run_dir):
+        """Build touching auth/ paths that were declared in spec should NOT promote tier."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        def auth_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ) -> BuildArtifact:
+            return BuildArtifact(
+                build_id="build-declared",
+                plan_id="plan-1",
+                spec_id="test-spec",
+                evidence=[
+                    BuildEvidence(
+                        task_id="t1",
+                        files_changed=["src/auth/x.py"],
+                        verification_notes="built",
+                    )
+                ],
+                all_tests_passing=True,
+                files_changed=["src/auth/x.py"],
+            )
+
+        runners["build"] = auth_build_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        # Declare auth in spec_target_files — auth/ path is covered
+        run = _make_run(run_id="router-no-promo-run", tier=2)
+        run.spec_target_files = ["src/auth/x.py"]
+
+        result = orchestrator.run_pipeline(run)
+
+        # tier should remain at 2 because auth/ was declared
+        assert result.tier == 2, (
+            f"Expected tier unchanged at 2 (auth declared), got {result.tier}"
+        )
+        assert result.tier_promoted_at is None, (
+            "tier_promoted_at should remain None when no undeclared sensitive files"
+        )
+
+    def test_promotion_sticky_across_stages(self, run_dir):
+        """After tier promotion in build stage, _should_run_challenge should return True."""
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        def sensitive_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ) -> BuildArtifact:
+            return BuildArtifact(
+                build_id="build-sticky",
+                plan_id="plan-1",
+                spec_id="test-spec",
+                evidence=[
+                    BuildEvidence(
+                        task_id="t1",
+                        files_changed=["db/migrations/001.sql"],
+                        verification_notes="built",
+                    )
+                ],
+                all_tests_passing=True,
+                files_changed=["db/migrations/001.sql"],
+            )
+
+        runners["build"] = sensitive_build_runner
+
+        challenge_called = [False]
+
+        def tracking_challenge_gate() -> GateDecision:
+            challenge_called[0] = True
+            return GateDecision(
+                decision="advance",
+                protocol_type="challenge",
+                protocol_session_id="stub",
+                rationale="ok",
+            )
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": tracking_challenge_gate,
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="router-sticky-run", tier=2)
+        run.spec_target_files = ["src/utils.py"]  # no sensitive paths declared
+
+        result = orchestrator.run_pipeline(run)
+
+        # Tier should be promoted to 3
+        assert result.tier == 3, f"Expected tier=3 after promotion, got {result.tier}"
+        # Challenge gate should have fired (tier=3 triggers it)
+        assert challenge_called[0] is True, "Challenge gate must fire after tier promotion to 3"
+
+    def test_no_demotion_on_resume(self, run_dir):
+        """Persisted run with promoted tier=3 should retain tier=3 after load."""
+        from agentcouncil.autopilot.run import load_run as _load_run, persist as _persist
+
+        run = _make_run(run_id="router-no-demotion", tier=3)
+        run.tier_promoted_at = datetime.now(timezone.utc).isoformat()
+        _persist(run)
+
+        loaded = _load_run("router-no-demotion")
+        assert loaded.tier == 3, (
+            f"Tier must be 3 after persisting promoted run, got {loaded.tier}"
+        )
+        assert loaded.tier_promoted_at is not None, "tier_promoted_at must be preserved"

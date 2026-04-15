@@ -14,6 +14,7 @@ Requirements addressed:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from agentcouncil.autopilot.artifacts import (
@@ -33,6 +34,7 @@ from agentcouncil.autopilot.artifacts import (
 )
 from agentcouncil.autopilot.loader import StageRegistryEntry, load_default_registry
 from agentcouncil.autopilot.normalizer import GateNormalizer
+from agentcouncil.autopilot.router import detect_undeclared_sensitive_files
 from agentcouncil.autopilot.run import (
     AutopilotRun,
     StageCheckpoint,
@@ -303,6 +305,19 @@ class LinearOrchestrator:
             # If run is no longer running (blocked/failed), stop
             if run.status != "running":
                 break
+
+            # SAFE-04: Check for tier promotion after any stage that produces files_changed.
+            # Fires if the artifact has files_changed (e.g., BuildArtifact) and spec_target_files
+            # are available. Promotion is monotonic — tier only goes up.
+            stage_art = artifact_registry.get(current_stage)
+            if stage_art is not None:
+                actual_files: list[str] = []
+                if hasattr(stage_art, "files_changed"):
+                    actual_files = list(stage_art.files_changed)
+                elif isinstance(stage_art, dict) and "files_changed" in stage_art:
+                    actual_files = list(stage_art.get("files_changed", []))
+                if actual_files:
+                    self._maybe_promote_tier(run, run.spec_target_files, actual_files)
 
             # VER-04: verify->build retry loop
             # After verify stage completes, check for retry_build recommendation.
@@ -602,6 +617,29 @@ class LinearOrchestrator:
         if run.tier == 3:
             return True
         return False
+
+    def _maybe_promote_tier(
+        self,
+        run: AutopilotRun,
+        declared_paths: list[str],
+        actual_paths: list[str],
+    ) -> None:
+        """Promote run.tier if undeclared sensitive files are detected (SAFE-04).
+
+        Monotonic operation — tier only increases, never decreases.
+        Sets tier_promoted_at to ISO timestamp and persists run if promotion occurs.
+
+        Args:
+            run: AutopilotRun whose tier may be promoted.
+            declared_paths: Paths declared in the spec (spec_target_files).
+            actual_paths: Paths actually touched (e.g., BuildArtifact.files_changed).
+        """
+        undeclared = detect_undeclared_sensitive_files(declared_paths, actual_paths)
+        if undeclared and run.tier < 3:
+            run.tier = 3
+            run.tier_promoted_at = datetime.now(timezone.utc).isoformat()
+            run.updated_at = time.time()
+            persist(run)
 
     def _find_stage_checkpoint(
         self,
