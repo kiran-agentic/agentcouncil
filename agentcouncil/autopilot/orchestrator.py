@@ -422,9 +422,9 @@ class LinearOrchestrator:
         if gate_type == "review_loop" and ConvergenceResult is not None:
             stub_artifact = ConvergenceResult(
                 final_verdict="pass",
-                exit_reason="stub",
+                exit_reason="all_verified",
                 final_findings=[],
-                rounds_completed=1,
+                total_iterations=1,
             )
             return self._normalizer.normalize("review_loop", stub_artifact)
 

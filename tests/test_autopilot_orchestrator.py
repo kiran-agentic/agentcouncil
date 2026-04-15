@@ -22,6 +22,7 @@ from agentcouncil.autopilot.run import (
     load_run,
     persist,
     resume,
+    validate_transition,
 )
 from agentcouncil.autopilot.loader import (
     StageRegistryEntry,
@@ -740,3 +741,78 @@ class TestChallengeGate:
             "gate_runners['none'] must never be called for default_gate=none stages"
         )
         assert result.status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# TestMCPTools — PERS-04: MCP tool registration and basic behavior
+# ---------------------------------------------------------------------------
+
+
+class TestMCPTools:
+    """PERS-04: MCP tool registration and basic behavior."""
+
+    def test_prepare_returns_run_id(self, tmp_path, monkeypatch):
+        """autopilot_prepare creates a run and returns run_id."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        from agentcouncil.server import autopilot_prepare_tool
+        result = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"], tier=2,
+        )
+        assert "run_id" in result
+        assert result["status"] == "running"
+        assert result["current_stage"] == "spec_prep"
+        # Verify file was persisted
+        files = list(tmp_path.glob("*.json"))
+        assert len(files) == 1
+
+    def test_status_reflects_run(self, tmp_path, monkeypatch):
+        """autopilot_status returns current run state."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        from agentcouncil.server import autopilot_prepare_tool, autopilot_status_tool
+        prep = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"],
+        )
+        status = autopilot_status_tool(run_id=prep["run_id"])
+        assert status["run_id"] == prep["run_id"]
+        assert status["status"] == "running"
+        assert len(status["stages"]) == 5
+
+    def test_start_completes_run(self, tmp_path, monkeypatch):
+        """autopilot_start runs pipeline to completion with stubs."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        from agentcouncil.server import autopilot_prepare_tool, autopilot_start_tool
+        prep = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"],
+        )
+        result = autopilot_start_tool(run_id=prep["run_id"])
+        assert result["status"] == "completed"
+        assert result["completed_at"] is not None
+
+    def test_resume_tool_returns_state(self, tmp_path, monkeypatch):
+        """autopilot_resume continues a paused run."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        # Create a run, manually set to paused_for_approval
+        import time as _time
+        run = AutopilotRun(
+            run_id="resume-test", spec_id="s1", status="running",
+            current_stage="plan", tier=2,
+            stages=[
+                StageCheckpoint(stage_name="spec_prep", status="advanced",
+                    artifact_snapshot=_stub_spec_prep_artifact().model_dump()),
+                StageCheckpoint(stage_name="plan", status="blocked"),
+                StageCheckpoint(stage_name="build", status="pending"),
+                StageCheckpoint(stage_name="verify", status="pending"),
+                StageCheckpoint(stage_name="ship", status="pending"),
+            ],
+            started_at=_time.time(), updated_at=_time.time(),
+        )
+        validate_transition(run.status, "paused_for_approval")
+        run.status = "paused_for_approval"
+        persist(run)
+
+        from agentcouncil.server import autopilot_resume_tool
+        result = autopilot_resume_tool(run_id="resume-test")
+        assert result["status"] == "completed"

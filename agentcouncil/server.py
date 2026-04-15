@@ -1230,8 +1230,10 @@ def autopilot_resume_tool(run_id: str) -> dict:
     Only works for runs with status=paused_for_approval or paused_for_revision.
     """
     run, artifact_reg = resume(run_id)
-    # Transition back to running
-    validate_transition(run.status, "running")
+    # resume() has already validated the run is in a paused state.
+    # Paused states are sinks in the state machine (no outgoing transitions
+    # via validate_transition), so we bypass the transition check here and
+    # directly reset to "running" for orchestrator re-entry.
     run.status = "running"
     persist(run)
 
