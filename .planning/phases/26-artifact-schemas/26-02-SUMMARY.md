@@ -118,6 +118,14 @@ None — no external service configuration required.
 - Phase 30 (orchestrator) has all typed contracts it needs for stage sequencing
 - No blockers.
 
+## Self-Check: PASSED
+
+- artifacts.py: FOUND at agentcouncil/autopilot/artifacts.py (worktree)
+- test file: FOUND at tests/test_autopilot_artifacts.py (worktree)
+- SUMMARY.md: FOUND at .planning/phases/26-artifact-schemas/26-02-SUMMARY.md
+- Commit 1183776: FOUND (feat: output-side models)
+- Commit f7eb7b2: FOUND (test: comprehensive tests)
+
 ---
 *Phase: 26-artifact-schemas*
 *Completed: 2026-04-15*
