@@ -583,19 +583,14 @@ class TestChallengeGate:
     """Tests for ORCH-05: conditional challenge gate after verify."""
 
     def test_challenge_fires_for_external(self, run_dir):
-        """Challenge gate is invoked after verify when side_effect_level=external."""
+        """Challenge gate is invoked after verify when side_effect_level=external.
+
+        With SAFE-02, external stages require pre-execution approval. This test simulates
+        the resume-after-approval scenario: verify's checkpoint is pre-set to 'blocked'
+        (approval granted), so the approval guard bypasses and the challenge gate fires.
+        """
         registry = _make_external_verify_registry()
         runners = _make_stub_runners()
-
-        challenge_gate = _AdvanceGate()
-        challenge_called = []
-
-        def tracking_challenge(run=None, reg=None, guidance=None):
-            challenge_called.append(True)
-            return _stub_ship_artifact()  # not used directly
-
-        # Wrap challenge gate to track calls
-        original_challenge = challenge_gate
 
         class TrackingChallengeGate:
             def __init__(self):
@@ -620,8 +615,25 @@ class TestChallengeGate:
             runners=runners,
             gate_runners=gate_runners,
         )
-        run = _make_run(run_id="challenge-external-run", tier=2)
-        result = orchestrator.run_pipeline(run)
+        # Start from verify stage with verify checkpoint already "blocked" (approval granted).
+        # This simulates the resume-after-approval flow: the pipeline paused at verify
+        # for approval, human approved, run.status was reset to running and run_pipeline called.
+        run = _make_run(run_id="challenge-external-run", tier=2, current_stage="verify")
+        # Pre-populate prior stage artifacts so artifact_registry is consistent
+        artifact_registry = {
+            "spec_prep": _stub_spec_prep_artifact(),
+            "plan": _stub_plan_artifact(),
+            "build": _stub_build_artifact(),
+        }
+        # Mark earlier stages as advanced in checkpoints
+        for checkpoint in run.stages:
+            if checkpoint.stage_name in ("spec_prep", "plan", "build"):
+                checkpoint.status = "advanced"
+        # Pre-set verify checkpoint to "blocked" — simulates approval already granted
+        verify_cp = next(c for c in run.stages if c.stage_name == "verify")
+        verify_cp.status = "blocked"
+
+        result = orchestrator.run_pipeline(run, artifact_registry=artifact_registry)
 
         assert tracking_gate.called, (
             "Challenge gate must be invoked for side_effect_level=external"

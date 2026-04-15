@@ -8,6 +8,8 @@ conditionally running the challenge gate after verify.
 Requirements addressed:
 - ORCH-03: Linear stage sequencing with gate loop (advance/revise/block)
 - ORCH-05: Conditional challenge gate after verify (side_effect_level=external or tier=3)
+- SAFE-01: Three-tier autonomy model with per-stage classification (executor/council/approval-gated)
+- SAFE-02: Approval boundary blocks external side effects pending human approval
 """
 from __future__ import annotations
 
@@ -263,6 +265,19 @@ class LinearOrchestrator:
 
             runner = self._runners.get(current_stage, _default_stub_runner(current_stage))
 
+            # SAFE-02: Pre-execution approval boundary.
+            # Must fire BEFORE marking in_progress to prevent any runner execution
+            # on stages requiring human approval.
+            if self._should_pause_for_approval(run, entry):
+                run.current_stage = current_stage
+                run.updated_at = time.time()
+                checkpoint = self._find_stage_checkpoint(run, current_stage)
+                checkpoint.status = "blocked"
+                validate_transition(run.status, "paused_for_approval")
+                run.status = "paused_for_approval"  # type: ignore[assignment]
+                persist(run)
+                break
+
             # Update current_stage and mark in_progress
             run.current_stage = current_stage
             run.updated_at = time.time()
@@ -385,6 +400,50 @@ class LinearOrchestrator:
     # ------------------------------------------------------------------
     # Internal methods
     # ------------------------------------------------------------------
+
+    def _classify_stage(self, run: AutopilotRun, entry: StageRegistryEntry) -> str:
+        """Return 'executor', 'council', or 'approval-gated' for this stage/run combo.
+
+        Classification rules (SAFE-01):
+        - approval_required=True on manifest -> always approval-gated (unconditional)
+        - side_effect_level=external on manifest -> approval-gated
+        - default_gate != "none" -> council
+        - otherwise -> executor
+
+        Args:
+            run: AutopilotRun with tier information.
+            entry: StageRegistryEntry with manifest fields.
+
+        Returns:
+            One of 'executor', 'council', or 'approval-gated'.
+        """
+        if entry.manifest.approval_required:
+            return "approval-gated"
+        if entry.manifest.side_effect_level == "external":
+            return "approval-gated"
+        if entry.manifest.default_gate != "none":
+            return "council"
+        return "executor"
+
+    def _should_pause_for_approval(self, run: AutopilotRun, entry: StageRegistryEntry) -> bool:
+        """Check whether this stage should pause for human approval before execution.
+
+        Returns False if the stage checkpoint is already "blocked" — this means the stage
+        was previously blocked and is now being resumed (the act of calling autopilot_resume
+        IS the approval). This prevents infinite re-blocking on resume.
+
+        Args:
+            run: AutopilotRun with tier information.
+            entry: StageRegistryEntry with manifest fields.
+
+        Returns:
+            True if stage should pause for approval before runner fires.
+        """
+        if self._classify_stage(run, entry) != "approval-gated":
+            return False
+        # If checkpoint already blocked, approval was granted via resume — skip guard
+        checkpoint = self._find_stage_checkpoint(run, entry.manifest.stage_name)
+        return checkpoint.status != "blocked"
 
     def _run_stage_with_gate(
         self,
