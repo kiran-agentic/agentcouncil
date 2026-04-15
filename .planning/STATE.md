@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 26-02-PLAN.md
-last_updated: "2026-04-15T07:01:36.100Z"
+stopped_at: Completed 27-01-PLAN.md
+last_updated: "2026-04-15T07:23:35.446Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -61,6 +61,9 @@ Recent decisions affecting current work:
 - [Phase 26]: SpecArtifact spec_id validates [a-z0-9-]+ pattern; PlanArtifact enforces execution_order completeness and cross-reference validity
 - [Phase 26-artifact-schemas]: VerifyArtifact validator checks 4 independent invariants; mock_policy forbidden deferred to Phase 31 (semantic judgment not model invariant)
 - [Phase 26-artifact-schemas]: Transition lineage helpers are standalone functions not model validators — cross-artifact checks are orchestrator-layer concern
+- [Phase 27]: [Phase 27] KNOWN_ARTIFACT_TYPES is a frozenset constant in loader.py — avoids circular import with artifacts.py while maintaining single source of truth for valid artifact names
+- [Phase 27]: [Phase 27] build/ workflow dir force-added to git because top-level .gitignore has 'build/' pattern that wrongly matched agentcouncil/autopilot/workflows/build/
+- [Phase 27]: [Phase 27] StageRegistryEntry is a frozen dataclass — manifests are configuration data, not domain objects; frozen ensures registry immutability after load
 
 ### Pending Todos
 
@@ -72,6 +75,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T07:01:36.098Z
-Stopped at: Completed 26-02-PLAN.md
+Last session: 2026-04-15T07:23:35.444Z
+Stopped at: Completed 27-01-PLAN.md
 Resume file: None

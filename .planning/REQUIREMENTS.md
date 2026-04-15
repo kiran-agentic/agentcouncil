@@ -17,8 +17,8 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 
 ### Stage Orchestration
 
-- [ ] **ORCH-01**: Manifest YAML schema with stage_type, input/output artifact, default_gate, side_effect_level, retry_policy
-- [ ] **ORCH-02**: Manifest loader discovers workflow directories, validates contracts, builds stage registry
+- [x] **ORCH-01**: Manifest YAML schema with stage_type, input/output artifact, default_gate, side_effect_level, retry_policy
+- [x] **ORCH-02**: Manifest loader discovers workflow directories, validates contracts, builds stage registry
 - [ ] **ORCH-03**: Linear orchestrator state machine threads typed artifacts through spec_prep → plan → build → verify → ship
 - [ ] **ORCH-04**: Gate normalization maps protocol outputs (ConsensusArtifact, ReviewArtifact, ConvergenceResult, ChallengeArtifact, DecideArtifact) to advance/revise/block
 - [ ] **ORCH-05**: Conditional challenge gate after verify fires only for high-risk work (sensitive paths, external side effects, Tier 3, explicit request)
@@ -102,8 +102,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ART-03 | Phase 26 | Complete |
 | ART-04 | Phase 26 | Complete |
 | ART-05 | Phase 26 | Complete |
-| ORCH-01 | Phase 27 | Pending |
-| ORCH-02 | Phase 27 | Pending |
+| ORCH-01 | Phase 27 | Complete |
+| ORCH-02 | Phase 27 | Complete |
 | ORCH-03 | Phase 30 | Pending |
 | ORCH-04 | Phase 28 | Pending |
 | ORCH-05 | Phase 30 | Pending |
