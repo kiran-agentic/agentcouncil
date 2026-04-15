@@ -40,7 +40,7 @@ v2.0 adds a gated work pipeline that sequences five stages with typed artifacts,
 spec_prep → plan → build → verify → ship
 ```
 
-Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.) and passes through a gate (review_loop or challenge) before advancing. Gates can advance, request revision, or block for human approval.
+Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`plan` and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. `spec_prep` and `ship` have no gates.
 
 ### MCP Tools
 
@@ -54,9 +54,9 @@ Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.) and 
 ### Three-Tier Autonomy
 
 Runs are classified into tiers based on target files:
-- **Tier 1** — Low-risk changes (default)
+- **Tier 1** — Low-risk changes
 - **Tier 2** — Standard changes (default)
-- **Tier 3** — Sensitive paths (auth/, migrations/, deploy/) — triggers challenge gate after verify
+- **Tier 3** — Sensitive paths (`auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/`) — triggers challenge gate after verify
 
 Tier only promotes (never demotes). Sensitive file detection during execution can promote mid-run.
 

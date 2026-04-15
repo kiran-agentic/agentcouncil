@@ -206,9 +206,9 @@ The four deliberation functions are also exposed as MCP tools for library-mode u
 
 | Tool | Signature | Purpose |
 |------|-----------|---------|
-| `autopilot_prepare` | `(spec)` | Validate spec, classify tier, create run |
+| `autopilot_prepare` | `(intent, spec_id, title, objective, requirements, acceptance_criteria, tier=2, target_files=None)` | Validate spec, classify tier, create run |
 | `autopilot_start` | `(run_id)` | Execute the full pipeline from spec_prep through ship |
-| `autopilot_status` | `(run_id)` | Inspect current run state, stage, and artifacts |
+| `autopilot_status` | `(run_id)` | Inspect current run state, stages, and gate decisions |
 | `autopilot_resume` | `(run_id)` | Continue a paused run from the blocked stage |
 
 These tools accept no backend, profile, or model arguments. Gate execution currently uses stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions.
@@ -522,7 +522,7 @@ After each work stage, the orchestrator runs a gate (review_loop, challenge, or 
 | `spec_prep` | none | Produces SpecPrepArtifact, advances directly |
 | `plan` | review_loop | Gate reviews the plan artifact |
 | `build` | review_loop | Gate reviews the build artifact |
-| `verify` | challenge (conditional) | Only runs if tier >= 3; otherwise advances directly |
+| `verify` | challenge (conditional) | Only runs if `tier >= 3` or `verify.side_effect_level == "external"`; otherwise advances directly |
 | `ship` | none | Produces ShipArtifact, advances directly |
 
 ### GateNormalizer Mapping
@@ -543,7 +543,7 @@ The `GateNormalizer` translates protocol-specific verdicts into uniform gate dec
 |------|---------|-------------|
 | 1 | Low-risk file changes | Default gates per manifest |
 | 2 | Standard changes | Default gates per manifest |
-| 3 | Sensitive paths (auth/, migrations/, deploy/) | Conditional challenge gate fires after verify |
+| 3 | Sensitive paths (`auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/`) | Conditional challenge gate fires after verify |
 
 Tier is classified at run creation (`classify_run` in router.py) and can promote mid-run (never demote) when undeclared sensitive files are touched or gates return critical findings.
 

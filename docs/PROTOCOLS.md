@@ -195,7 +195,7 @@ But each works standalone:
 
 ## Protocols as Autopilot Gates
 
-The v2.0 Autopilot pipeline uses protocols as stage gates. Each stage's manifest declares which protocol type serves as its gate (e.g., `plan` uses `review_loop`, `verify` uses `challenge`). After a stage completes, the orchestrator runs the declared gate protocol and feeds the result through the `GateNormalizer`.
+The v2.0 Autopilot pipeline is designed to use protocols as stage gates. Each stage's manifest declares which protocol type serves as its gate (e.g., `plan` uses `review_loop`, `verify` uses `challenge`). After a stage completes, the orchestrator creates a gate artifact and feeds it through the `GateNormalizer` to produce an advance/revise/block decision.
 
 ### GateNormalizer Mapping
 
@@ -216,7 +216,7 @@ The normalizer translates protocol-specific verdicts into uniform gate decisions
 | spec_prep | none | Always advances |
 | plan | review_loop | After plan artifact produced |
 | build | review_loop | After build artifact produced |
-| verify | challenge | Conditional — only when tier >= 3 |
+| verify | challenge | Conditional — only when `tier >= 3` or `verify.side_effect_level == "external"` |
 | ship | none | Always advances |
 
 ### Current Limitations
