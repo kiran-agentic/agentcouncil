@@ -418,7 +418,7 @@ Plans:
 | 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
-| 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete   | 2026-04-15 |
+| 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
