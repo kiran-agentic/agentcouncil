@@ -36,7 +36,7 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 - [x] **VER-01**: Five verification levels: static, unit, integration, smoke, e2e
 - [x] **VER-02**: Real integration testing — start services, hit real endpoints, check real state (no mocks at integration/e2e level)
 - [x] **VER-03**: Per-acceptance-criterion evidence with structured command results, service lifecycle, and artifacts
-- [ ] **VER-04**: Verify → build retry loop with actionable failure evidence (max 2 retries, hard cap 3)
+- [x] **VER-04**: Verify → build retry loop with actionable failure evidence (max 2 retries, hard cap 3)
 - [x] **VER-05**: Generated integration probes when project has no existing test infrastructure
 - [x] **VER-06**: Playwright/browser automation for frontend changes
 
@@ -115,7 +115,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VER-01 | Phase 31 | Complete |
 | VER-02 | Phase 31 | Complete |
 | VER-03 | Phase 31 | Complete |
-| VER-04 | Phase 31 | Pending |
+| VER-04 | Phase 31 | Complete |
 | VER-05 | Phase 31 | Complete |
 | VER-06 | Phase 31 | Complete |
 | SAFE-01 | Phase 32 | Pending |
