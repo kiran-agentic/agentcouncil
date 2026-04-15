@@ -1619,6 +1619,7 @@ class TestFailureHandling:
 
     def test_gate_retry_backend_fallback_uses_fallback_runner(self, run_dir):
         """With retry_policy='backend_fallback', orchestrator calls fallback gate runner on exception."""
+        # Modify plan's retry_policy to backend_fallback
         registry = _make_registry_with_retry_policy("plan", "backend_fallback")
         runners = _make_stub_runners()
 
@@ -1633,9 +1634,11 @@ class TestFailureHandling:
                 rationale="fallback gate passed",
             )
 
-        always_exception = _AlwaysExceptionGate()
+        # Only plan should fail — use a gate that fails on first call for plan
+        # then succeeds on subsequent calls for build
+        exception_then_advance = _ExceptionThenAdvanceGate()
         gate_runners = {
-            "review_loop": always_exception,
+            "review_loop": exception_then_advance,
             "review_loop_fallback": fallback_gate,
             "challenge": _AdvanceGate(),
         }
@@ -1915,52 +1918,19 @@ class TestDynamicGatePromotion:
 
     def test_challenge_not_ready_promotes_to_tier3(self, run_dir):
         """Challenge gate returning not_ready promotes run.tier to 3."""
-        from agentcouncil.autopilot.normalizer import GateNormalizer
         from agentcouncil.schemas import ChallengeArtifact, FailureMode
 
-        registry = _make_test_registry()
+        # Use external verify registry so challenge gate fires for tier=2 run (ORCH-05)
+        registry = _make_external_verify_registry()
         runners = _make_stub_runners()
 
-        # Use a custom normalizer that produces 'block' for not_ready challenge
-        # The orchestrator should detect the raw artifact and promote
         challenge_artifact = _make_challenge_not_ready_artifact()
-
-        # Inject a gate runner that makes the orchestrator "see" the not_ready artifact
-        # The test expects _maybe_promote_from_gate to fire on the raw artifact
-        # The challenge gate returns block (from not_ready normalization)
-        gate_call_count = [0]
-
-        def challenge_gate_not_ready() -> GateDecision:
-            gate_call_count[0] += 1
-            return GateDecision(
-                decision="block",
-                protocol_type="challenge",
-                protocol_session_id="stub-not-ready",
-                rationale="challenge not_ready",
-            )
-
-        # To test _maybe_promote_from_gate, we need the orchestrator to have access
-        # to the raw ChallengeArtifact. Since injected gate_runners return GateDecision
-        # directly, we set the _last_raw_artifact manually via a subclass approach.
-        # The plan says: implementation will store raw artifact on self._last_raw_artifact
-        # Tests expect run.tier == 3 after the gate fires with not_ready raw artifact.
-
-        # Use stub protocol path (no gate_runners injected for challenge) so the
-        # orchestrator uses its internal _run_gate stub which normalizes ChallengeArtifact
-        # For this test: start at verify stage with challenge gate override
-        # The stub challenge artifact in _run_gate has readiness="ready"
-        # We need readiness="not_ready" to trigger promotion
-
-        # Approach: patch _run_gate to store a not_ready artifact as last_raw_artifact
-        # The implementation must expose self._last_raw_artifact for _run_gate_with_retry
-        # to pass to _maybe_promote_from_gate
 
         # Use a subclass that overrides _run_gate to inject the not_ready artifact
         class _InjectNotReadyChallengeOrchestrator(LinearOrchestrator):
             def _run_gate(self, gate_type: str) -> GateDecision:
                 if gate_type == "challenge":
                     self._last_raw_artifact = challenge_artifact
-                    # Normalize: not_ready -> block
                     return GateDecision(
                         decision="block",
                         protocol_type="challenge",
@@ -1969,8 +1939,10 @@ class TestDynamicGatePromotion:
                     )
                 return super()._run_gate(gate_type)
 
-        # Start pipeline at verify with tier=3 to trigger challenge gate
-        run = _make_run(run_id="challenge-not-ready-promo", tier=3, current_stage="verify")
+        # Start pipeline at verify with tier=2; external verify triggers challenge gate.
+        # Pre-set verify checkpoint to "blocked" (approval already granted) to bypass
+        # the pre-execution approval guard for this external-side-effect stage.
+        run = _make_run(run_id="challenge-not-ready-promo", tier=2, current_stage="verify")
         artifact_registry = {
             "spec_prep": _stub_spec_prep_artifact(),
             "plan": _stub_plan_artifact(),
@@ -1979,10 +1951,8 @@ class TestDynamicGatePromotion:
         for checkpoint in run.stages:
             if checkpoint.stage_name in ("spec_prep", "plan", "build"):
                 checkpoint.status = "advanced"
-
-        # tier already 3, so promotion is no-op — but test the not_ready path
-        # Reset tier to 2 to see promotion happen
-        run.tier = 2
+        verify_cp = next(c for c in run.stages if c.stage_name == "verify")
+        verify_cp.status = "blocked"  # simulates approval already granted
 
         gate_runners = {
             "review_loop": _AdvanceGate(),

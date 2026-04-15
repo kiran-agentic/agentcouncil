@@ -10,6 +10,7 @@ Requirements addressed:
 - ORCH-05: Conditional challenge gate after verify (side_effect_level=external or tier=3)
 - SAFE-01: Three-tier autonomy model with per-stage classification (executor/council/approval-gated)
 - SAFE-02: Approval boundary blocks external side effects pending human approval
+- SAFE-05: Failure handling with retry policy, exhaustion escalation, and gate-outcome promotion
 """
 from __future__ import annotations
 
@@ -43,10 +44,11 @@ from agentcouncil.autopilot.run import (
 )
 
 try:
-    from agentcouncil.schemas import ChallengeArtifact, ConvergenceResult
+    from agentcouncil.schemas import ChallengeArtifact, ConvergenceResult, ReviewArtifact
 except ImportError:
     ChallengeArtifact = None  # type: ignore[assignment,misc]
     ConvergenceResult = None  # type: ignore[assignment,misc]
+    ReviewArtifact = None  # type: ignore[assignment,misc]
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +225,7 @@ class LinearOrchestrator:
         self._max_revise = max_revise_iterations
         self._gate_runners = gate_runners or {}
         self._build_retry_count: int = 0
+        self._last_raw_artifact: Any = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -512,8 +515,27 @@ class LinearOrchestrator:
                 persist(run)
                 break
 
-            # Run the gate
-            gate_decision = self._run_gate(gate_type)
+            # Run the gate with retry policy from manifest (SAFE-05)
+            try:
+                gate_decision, raw_artifact = self._run_gate_with_retry(
+                    gate_type, entry.manifest.retry_policy
+                )
+            except Exception as exc:
+                # All retries exhausted — escalate to paused_for_approval
+                checkpoint.status = "blocked"
+                run.failure_reason = (
+                    f"Stage {stage_name!r}: gate {gate_type!r} failed after "
+                    f"retry_policy={entry.manifest.retry_policy!r} exhausted. "
+                    f"Error: {exc}"
+                )
+                validate_transition(run.status, "paused_for_approval")
+                run.status = "paused_for_approval"  # type: ignore[assignment]
+                run.updated_at = time.time()
+                persist(run)
+                return
+
+            # SAFE-05 SC4: Check for gate-outcome-driven tier promotion
+            self._maybe_promote_from_gate(run, gate_type, raw_artifact)
 
             # Update checkpoint with gate decision
             checkpoint.gate_decision = gate_decision.decision
@@ -568,6 +590,7 @@ class LinearOrchestrator:
         """
         # Use injected gate runner if available
         if gate_type in self._gate_runners:
+            self._last_raw_artifact = None
             return self._gate_runners[gate_type]()
 
         # Fall back to stub protocol artifact + normalizer
@@ -578,19 +601,21 @@ class LinearOrchestrator:
                 final_findings=[],
                 total_iterations=1,
             )
+            self._last_raw_artifact = stub_artifact
             return self._normalizer.normalize("review_loop", stub_artifact)
 
         if gate_type == "challenge" and ChallengeArtifact is not None:
             stub_artifact = ChallengeArtifact(
                 readiness="ready",
-                assumptions_tested=[],
+                summary="stub challenge gate",
                 failure_modes=[],
-                overall_confidence="high",
-                executive_summary="stub",
+                next_action="proceed",
             )
+            self._last_raw_artifact = stub_artifact
             return self._normalizer.normalize("challenge", stub_artifact)
 
         # Fallback: produce an advance decision for unknown/unavailable gate types
+        self._last_raw_artifact = None
         return GateDecision(
             decision="advance",
             protocol_type="review_loop",
@@ -618,6 +643,112 @@ class LinearOrchestrator:
             return True
         return False
 
+    def _apply_tier3_promotion(self, run: AutopilotRun, reason: str) -> None:
+        """Monotonically promote run to tier 3. No-op if already tier 3. Persists immediately.
+
+        Args:
+            run: AutopilotRun whose tier may be promoted.
+            reason: Human-readable reason for the promotion (stored in tier_classification_reason).
+        """
+        if run.tier < 3:
+            run.tier = 3
+            run.tier_promoted_at = datetime.now(timezone.utc).isoformat()
+            run.tier_classification_reason = reason
+            run.updated_at = time.time()
+            persist(run)
+
+    def _maybe_promote_from_gate(
+        self,
+        run: AutopilotRun,
+        gate_type: str,
+        raw_artifact: Any,
+    ) -> None:
+        """Promote tier if gate output signals challenge not_ready or critical/high review finding.
+
+        Inspects the raw protocol artifact (before normalization) for:
+        - ChallengeArtifact with readiness="not_ready" → promote to tier 3
+        - ConvergenceResult with a Finding of severity "critical" or "high" → promote to tier 3
+        - ReviewArtifact with a Finding of severity "critical" or "high" → promote to tier 3
+
+        Graceful no-op if raw_artifact is None or unrecognized type.
+
+        Args:
+            run: AutopilotRun whose tier may be promoted.
+            gate_type: The gate type string (used in promotion reason message).
+            raw_artifact: The raw protocol artifact before normalization, or None.
+        """
+        if raw_artifact is None:
+            return
+
+        if ChallengeArtifact is not None and isinstance(raw_artifact, ChallengeArtifact):
+            if raw_artifact.readiness == "not_ready":
+                self._apply_tier3_promotion(
+                    run,
+                    f"gate {gate_type!r}: challenge readiness=not_ready",
+                )
+            return
+
+        findings = None
+        reason_prefix = f"gate {gate_type!r}"
+        if ConvergenceResult is not None and isinstance(raw_artifact, ConvergenceResult):
+            findings = raw_artifact.final_findings
+        elif ReviewArtifact is not None and isinstance(raw_artifact, ReviewArtifact):
+            findings = raw_artifact.findings
+
+        if findings is not None:
+            for finding in findings:
+                if getattr(finding, "severity", None) in ("critical", "high"):
+                    self._apply_tier3_promotion(
+                        run,
+                        f"{reason_prefix}: review finding severity={finding.severity!r}",
+                    )
+                    break
+
+    def _run_gate_with_retry(
+        self,
+        gate_type: str,
+        retry_policy: str,
+    ) -> tuple[GateDecision, Any]:
+        """Run gate with retry according to manifest retry_policy.
+
+        Returns (gate_decision, raw_artifact) where raw_artifact is the protocol
+        artifact before normalization (for promotion checks). When using injected
+        gate_runners, raw_artifact is None (gate_runners return GateDecision directly).
+
+        retry_policy="none": single attempt, re-raise on exception
+        retry_policy="once": one retry on exception
+        retry_policy="backend_fallback": try fallback runner if registered, else retry primary once
+
+        Args:
+            gate_type: The gate type string (e.g., "review_loop", "challenge").
+            retry_policy: One of "none", "once", "backend_fallback".
+
+        Returns:
+            Tuple of (GateDecision, raw_artifact).
+
+        Raises:
+            Exception: Re-raised from gate runner if all retries are exhausted.
+        """
+        try:
+            result = self._run_gate(gate_type)
+            return result, self._last_raw_artifact
+        except Exception:
+            if retry_policy == "none":
+                raise
+
+            # "backend_fallback": try registered fallback runner if available
+            if retry_policy == "backend_fallback":
+                fallback_key = f"{gate_type}_fallback"
+                if fallback_key in self._gate_runners:
+                    self._last_raw_artifact = None
+                    result = self._gate_runners[fallback_key]()
+                    return result, self._last_raw_artifact
+                # No fallback registered — fall through to retry primary once
+
+            # "once" (and "backend_fallback" with no fallback): retry primary gate
+            result = self._run_gate(gate_type)
+            return result, self._last_raw_artifact
+
     def _maybe_promote_tier(
         self,
         run: AutopilotRun,
@@ -635,11 +766,11 @@ class LinearOrchestrator:
             actual_paths: Paths actually touched (e.g., BuildArtifact.files_changed).
         """
         undeclared = detect_undeclared_sensitive_files(declared_paths, actual_paths)
-        if undeclared and run.tier < 3:
-            run.tier = 3
-            run.tier_promoted_at = datetime.now(timezone.utc).isoformat()
-            run.updated_at = time.time()
-            persist(run)
+        if undeclared:
+            self._apply_tier3_promotion(
+                run,
+                f"undeclared sensitive files: {undeclared}",
+            )
 
     def _find_stage_checkpoint(
         self,
