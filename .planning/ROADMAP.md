@@ -307,7 +307,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 28-01-PLAN.md — TDD GateNormalizer: all 5 protocol types + error handling + package re-export
+- [x] 28-01-PLAN.md — TDD GateNormalizer: all 5 protocol types + error handling + package re-export
 
 ### Phase 29: Autopilot Run State + Persistence
 **Goal**: Autopilot execution state survives process restarts and a paused run can be fully reconstructed from disk with no in-memory dependency
@@ -409,7 +409,7 @@ Plans:
 | 25. Documentation | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 26. Artifact Schemas | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
-| 28. Gate Normalization Layer | v2.0 | 0/1 | Not started | - |
+| 28. Gate Normalization Layer | v2.0 | 1/1 | Complete   | 2026-04-15 |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/? | Not started | - |
 | 30. Linear Orchestrator Skeleton | v2.0 | 0/? | Not started | - |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
