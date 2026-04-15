@@ -23,14 +23,9 @@ __all__ = ["run_spec_prep"]
 # PREP-01: Codebase research
 # ---------------------------------------------------------------------------
 
-_SENSITIVE_PATTERNS = [
-    "auth",
-    "migrations",
-    "infra",
-    "deploy",
-    "permissions",
-    ".env",
-]
+from agentcouncil.autopilot.router import SENSITIVE_PATH_PATTERNS as _SENSITIVE_PATH_PATTERNS
+
+_SENSITIVE_PATTERNS = [*_SENSITIVE_PATH_PATTERNS, ".env"]
 
 
 def run_codebase_research(

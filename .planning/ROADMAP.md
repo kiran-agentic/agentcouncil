@@ -383,7 +383,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
+- [ ] 33-01-PLAN.md — TDD rule-based router: classify_run, detect_undeclared_sensitive_files, tier promotion wiring
 
 ### Phase 34: Failure Handling + Dynamic Promotion
 **Goal**: The system recovers gracefully from protocol timeouts, exhausted retries, and mid-execution surprises while maintaining a complete checkpoint for every partial completion
@@ -397,7 +397,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
+- [ ] 34-01-PLAN.md — TDD failure handling: retry policy, escalation, partial checkpoints, gate-triggered promotion
 
 ## Progress
 
@@ -435,8 +435,8 @@ Plans:
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
 | 32. Approval Boundary | v2.0 | 1/1 | Complete    | 2026-04-15 |
-| 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
-| 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
+| 33. Rule-Based Router | v2.0 | 0/1 | Planning | - |
+| 34. Failure Handling + Dynamic Promotion | v2.0 | 0/1 | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 31 planned (4 plans, 2 waves)*
+*Last updated: 2026-04-15 — Phase 33 planned (1 plan, 1 wave)*
