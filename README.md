@@ -11,7 +11,7 @@ Two agents. Distinct roles. No echo chamber.
 
 AgentCouncil convenes Claude Code and an outside agent — each with a distinct role — to deliberate on problems. In brainstorm, both propose independently before seeing each other's work. In review, decide, and challenge, the outside agent evaluates, compares, or attacks without seeing Claude Code's internal reasoning. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
-**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, resumable protocol state, and a CLI session inspector. Expert Witness specialist checks and live Turn Stream events are available as building blocks but not yet wired into protocol execution.
+**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, resumable protocol state, a CLI session inspector, and an autopilot pipeline with typed artifacts, durable run state, gate normalization, and tier classification. Expert Witness specialist checks and live Turn Stream events are available as building blocks but not yet wired into protocol execution.
 
 </div>
 
@@ -31,6 +31,40 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 | "What happened?" | `/inspect` | View past deliberation sessions from the journal |
 
 > **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
+
+## Autopilot Pipeline
+
+v2.0 adds a gated work pipeline that sequences five stages with typed artifacts, persistent state, and tiered autonomy:
+
+```
+spec_prep → plan → build → verify → ship
+```
+
+Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.) and passes through a gate (review_loop or challenge) before advancing. Gates can advance, request revision, or block for human approval.
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `autopilot_prepare` | Validate spec, classify tier, create run |
+| `autopilot_start` | Execute the full pipeline |
+| `autopilot_status` | Inspect current run state |
+| `autopilot_resume` | Continue a paused run |
+
+### Three-Tier Autonomy
+
+Runs are classified into tiers based on target files:
+- **Tier 1** — Low-risk changes (default)
+- **Tier 2** — Standard changes (default)
+- **Tier 3** — Sensitive paths (auth/, migrations/, deploy/) — triggers challenge gate after verify
+
+Tier only promotes (never demotes). Sensitive file detection during execution can promote mid-run.
+
+### Current Limitations
+
+- `plan` and `build` stages use stub runners — real implementations planned
+- Gates use stub protocol artifacts, not live backend deliberation sessions
+- No skill/slash-command interface yet — autopilot is MCP-tool only
 
 ## Quick Start
 

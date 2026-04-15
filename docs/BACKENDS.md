@@ -346,6 +346,12 @@ Session strategy determines how conversation history is managed between the sess
 
 Persistent providers are more token-efficient for multi-turn deliberations. Replay providers work with any stateless HTTP endpoint but resend the full conversation each turn.
 
+## Autopilot Gate Backends
+
+The four autopilot MCP tools (`autopilot_prepare`, `autopilot_start`, `autopilot_status`, `autopilot_resume`) do not accept backend, profile, or model arguments. Backend selection — profiles, env vars, per-invocation overrides — applies to the deliberation tools (`brainstorm`, `review`, `decide`, `challenge`), not autopilot gates.
+
+Current autopilot gates use stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions. The gate normalizer translates protocol verdicts to advance/revise/block decisions, but the underlying protocol execution is stubbed. Real gate execution through backends is planned but not yet wired.
+
 ## Conformance Certification
 
 Before using a model for review or challenge, AgentCouncil checks whether it has been certified to support function calling (tool use).
@@ -357,6 +363,8 @@ Before using a model for review or challenge, AgentCouncil checks whether it has
 Certification is done by `ConformanceCertifier` and results are cached in `~/.agentcouncil/certifications.json`. A model is checked the first time it is used for a gated protocol; the result is cached and reused on subsequent calls.
 
 Certification happens automatically on first use of a gated protocol — no manual step needed. Stale certifications (from an older AgentCouncil version) warn to stderr but do not block execution — they are re-certified automatically.
+
+> **Note:** Conformance certification applies to protocol tools (brainstorm, review, decide, challenge), not autopilot gates. Autopilot gates currently use stub artifacts and do not invoke backend protocol sessions.
 
 ## Auto-Fallback
 

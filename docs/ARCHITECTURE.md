@@ -132,6 +132,19 @@ agentcouncil/
   specialist.py      # Expert Witness — bounded specialist consultation
   inspector.py       # Deliberation Inspector — CLI session viewer
 
+  # v2.0 Autopilot Pipeline
+  autopilot/
+    artifacts.py       # 16 Pydantic models (SpecArtifact through GateDecision)
+    loader.py          # StageManifest schema, ManifestLoader, load_default_registry()
+    normalizer.py      # GateNormalizer — protocol verdicts → advance/revise/block
+    orchestrator.py    # LinearOrchestrator — pipeline sequencing, gate loop, retry
+    run.py             # AutopilotRun state model, atomic persist/load/resume
+    router.py          # Rule-based tier classification, sensitive file detection
+    prep.py            # spec_prep runner — codebase research, readiness check
+    verify.py          # verify runner — five-level dispatch, evidence collection
+    ship.py            # ship runner — readiness packaging with git info
+    workflows/         # Stage manifest YAML files
+
 skills/              # Skill definitions (protocol instructions)
   brainstorm/SKILL.md   # /brainstorm — also supports backends= for Blind Panel
   review/SKILL.md       # /review — also supports --loop for convergence
@@ -188,6 +201,17 @@ The four deliberation functions are also exposed as MCP tools for library-mode u
 | `outside_query` | **DEPRECATED** — will be removed in a future release | Single-shot outside agent query; now a shim that routes through the provider pipeline |
 
 `outside_query` was the original tool for reaching the outside agent. It is replaced by the session API (`outside_start` / `outside_reply` / `outside_close`). Calls to `outside_query` still work but the response includes a deprecation notice directing users to the session tools.
+
+### Autopilot Tools
+
+| Tool | Signature | Purpose |
+|------|-----------|---------|
+| `autopilot_prepare` | `(spec)` | Validate spec, classify tier, create run |
+| `autopilot_start` | `(run_id)` | Execute the full pipeline from spec_prep through ship |
+| `autopilot_status` | `(run_id)` | Inspect current run state, stage, and artifacts |
+| `autopilot_resume` | `(run_id)` | Continue a paused run from the blocked stage |
+
+These tools accept no backend, profile, or model arguments. Gate execution currently uses stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions.
 
 ## Config System
 
@@ -474,7 +498,7 @@ Each stage has a manifest (`manifest.yaml`) declaring its gate type, side-effect
 
 | Module | Purpose |
 |--------|---------|
-| `artifacts.py` | 10 Pydantic models (SpecArtifact through GateDecision) with field validators |
+| `artifacts.py` | 16 Pydantic models (SpecArtifact through GateDecision) with field validators |
 | `loader.py` | StageManifest schema, ManifestLoader, load_default_registry() |
 | `normalizer.py` | GateNormalizer — translates protocol outputs to advance/revise/block |
 | `run.py` | AutopilotRun state model, atomic persist/load/resume, state machine |
@@ -491,19 +515,43 @@ After each work stage, the orchestrator runs a gate (review_loop, challenge, or 
 - **revise** — re-execute the work stage with revision_guidance (capped at max_revise_iterations)
 - **block** — halt with `status=paused_for_approval`, human resumes via `autopilot_resume`
 
+### Gate-per-Stage Mapping
+
+| Stage | Gate Type | Notes |
+|-------|-----------|-------|
+| `spec_prep` | none | Produces SpecPrepArtifact, advances directly |
+| `plan` | review_loop | Gate reviews the plan artifact |
+| `build` | review_loop | Gate reviews the build artifact |
+| `verify` | challenge (conditional) | Only runs if tier >= 3; otherwise advances directly |
+| `ship` | none | Produces ShipArtifact, advances directly |
+
+### GateNormalizer Mapping
+
+The `GateNormalizer` translates protocol-specific verdicts into uniform gate decisions:
+
+| Protocol | advance | revise | block |
+|----------|---------|--------|-------|
+| brainstorm | consensus, consensus_with_reservations | — | all other verdicts |
+| review | pass | revise | escalate |
+| review_loop | pass | revise | escalate |
+| challenge | ready | needs_hardening | not_ready |
+| decide | decided | experiment | deferred |
+
 ### Three-Tier Autonomy
 
-| Tier | Gate Behavior | Approval |
-|------|--------------|----------|
-| 1 (executor) | Skip gates | No |
-| 2 (council) | Full gate pipeline | No |
-| 3 (approval-gated) | Full gates + human sign-off | Yes |
+| Tier | Example | Gate Effect |
+|------|---------|-------------|
+| 1 | Low-risk file changes | Default gates per manifest |
+| 2 | Standard changes | Default gates per manifest |
+| 3 | Sensitive paths (auth/, migrations/, deploy/) | Conditional challenge gate fires after verify |
 
 Tier is classified at run creation (`classify_run` in router.py) and can promote mid-run (never demote) when undeclared sensitive files are touched or gates return critical findings.
 
+**Important:** Tier affects only the conditional challenge gate after verify. Stage classification (`_classify_stage`) uses manifest fields (`approval_required`, `side_effect_level`), not `run.tier`.
+
 ### MCP Tools
 
-Four tools exposed via `server.py`:
+Four tools exposed via `server.py`. These tools accept no backend, profile, or model arguments:
 - `autopilot_prepare` — validate spec, classify tier, create run
 - `autopilot_start` — execute the full pipeline
 - `autopilot_status` — inspect current run state
@@ -512,6 +560,7 @@ Four tools exposed via `server.py`:
 ### Known Limitations (v2.0)
 
 - `plan` and `build` stages use stub runners — real implementations deferred
+- Gates currently use stub protocol artifacts via `_run_gate()`, not real backend-selected protocol sessions
 - Lineage validators (validate_plan_lineage, etc.) are exported but not called at runtime
 - Single-client model — no concurrency guards on start/resume
 
