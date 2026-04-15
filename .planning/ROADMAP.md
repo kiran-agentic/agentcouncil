@@ -293,7 +293,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 27-01-PLAN.md — Manifest schema model, loader, five default manifests, and tests
+- [x] 27-01-PLAN.md — Manifest schema model, loader, five default manifests, and tests
 
 ### Phase 28: Gate Normalization Layer
 **Goal**: Any protocol output can be uniformly translated to an advance/revise/block decision so the orchestrator never branches on protocol type
@@ -321,7 +321,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 29-01-PLAN.md — TDD AutopilotRun models, persistence, state machine, resume, and __init__.py re-exports
+- [x] 29-01-PLAN.md — TDD AutopilotRun models, persistence, state machine, resume, and __init__.py re-exports
 
 ### Phase 30: Linear Orchestrator Skeleton
 **Goal**: The orchestrator can sequence stub work stages end-to-end through the full pipeline, persisting state and enforcing gate transitions, before real workflow content is added
@@ -333,7 +333,11 @@ Plans:
   3. When a gate returns `block`, the orchestrator sets `status=paused_for_approval` and halts — resuming via `autopilot_resume` continues from the blocked stage
   4. The conditional challenge gate after verify fires when `side_effect_level=external` or tier=3, and is skipped (verify advances directly to ship) for normal Tier 2 work
   5. Calling `autopilot_status`, `autopilot_start`, `autopilot_prepare`, and `autopilot_resume` via MCP returns well-formed responses reflecting current run state
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 30-01-PLAN.md — TDD LinearOrchestrator: stub stages, gate loop, conditional challenge, revise/block
+- [ ] 30-02-PLAN.md — MCP tools (autopilot_prepare/start/status/resume) + package re-exports
 
 ### Phase 31: Workflows + Spec Prep + Verify
 **Goal**: Real execution recipes are vendored and both spec_prep and verify stages produce their full typed artifacts with working implementation logic
@@ -413,12 +417,12 @@ Plans:
 | 26. Artifact Schemas | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
-| 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Planned | - |
-| 30. Linear Orchestrator Skeleton | v2.0 | 0/? | Not started | - |
+| 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
+| 30. Linear Orchestrator Skeleton | v2.0 | 0/2 | Planning    | - |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 29 planned (1 plan, 1 wave)*
+*Last updated: 2026-04-15 — Phase 30 planned (2 plans, 2 waves)*
