@@ -435,7 +435,7 @@ Plans:
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
 | 32. Approval Boundary | v2.0 | 1/1 | Complete    | 2026-04-15 |
-| 33. Rule-Based Router | v2.0 | 1/1 | Complete   | 2026-04-15 |
+| 33. Rule-Based Router | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/1 | Not started | - |
 
 ---
