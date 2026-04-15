@@ -509,7 +509,20 @@ class LinearOrchestrator:
 
         while True:
             # Execute the work stage
-            artifact = runner(run, artifact_registry, guidance)
+            try:
+                artifact = runner(run, artifact_registry, guidance)
+            except Exception as exc:
+                # Runner crashed — transition to failed with diagnostic info
+                checkpoint.status = "blocked"
+                checkpoint.completed_at = time.time()
+                run.failure_reason = (
+                    f"Stage runner '{stage_name}' raised {type(exc).__name__}: {exc}"
+                )
+                validate_transition(run.status, "failed")
+                run.status = "failed"  # type: ignore[assignment]
+                run.updated_at = time.time()
+                persist(run)
+                return
             artifact_registry[stage_name] = artifact
 
             # Update checkpoint with artifact snapshot

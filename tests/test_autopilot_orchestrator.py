@@ -2166,3 +2166,150 @@ class TestDynamicGatePromotion:
             f"tier_promoted_at must not be overwritten for already-tier3 run, "
             f"got {result.tier_promoted_at!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Review fix tests — F2, F3, F6
+# ---------------------------------------------------------------------------
+
+
+class TestReviewFixes:
+    """Tests added from code review findings F2, F3, F6."""
+
+    @pytest.fixture(autouse=True)
+    def run_dir(self, tmp_path, monkeypatch):
+        import agentcouncil.autopilot.run as run_mod
+        monkeypatch.setattr(run_mod, "RUN_DIR", tmp_path)
+        return tmp_path
+
+    def test_max_revise_exhaustion_reaches_failed(self):
+        """F2: Exhausting max_revise_iterations transitions to status=failed."""
+        registry = _make_test_registry()
+
+        class _AlwaysReviseGate:
+            def __call__(self, *args, **kwargs):
+                return GateDecision(
+                    decision="revise",
+                    protocol_type="review_loop",
+                    protocol_session_id="stub",
+                    rationale="always revise",
+                    revision_guidance="fix it",
+                )
+
+        gate_runners = {
+            "review_loop": _AlwaysReviseGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=_make_stub_runners(),
+            gate_runners=gate_runners,
+            max_revise_iterations=2,
+        )
+        run = _make_run(run_id="max-revise-exhaust", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "failed", (
+            f"Expected failed after max revise, got {result.status!r}"
+        )
+        assert result.failure_reason is not None
+        assert "max revise" in result.failure_reason.lower(), (
+            f"Expected 'max revise' in failure_reason, got {result.failure_reason!r}"
+        )
+
+    def test_runner_exception_transitions_to_failed(self):
+        """F3: A runner that raises transitions run to status=failed with diagnostic."""
+        registry = _make_test_registry()
+
+        def _crashing_runner(run, reg, guidance=None):
+            raise RuntimeError("network timeout")
+
+        runners = _make_stub_runners()
+        runners["build"] = _crashing_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="runner-crash", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "failed", (
+            f"Expected failed after runner crash, got {result.status!r}"
+        )
+        assert "build" in result.failure_reason
+        assert "RuntimeError" in result.failure_reason
+        assert "network timeout" in result.failure_reason
+
+    def test_gate_promotion_challenge_not_ready(self):
+        """F6: _maybe_promote_from_gate promotes tier on ChallengeArtifact(readiness=not_ready)."""
+        from agentcouncil.schemas import ChallengeArtifact
+
+        orch = LinearOrchestrator(
+            registry=_make_test_registry(),
+            runners=_make_stub_runners(),
+        )
+        run = _make_run(run_id="promo-challenge", tier=2)
+        from agentcouncil.schemas import FailureMode
+        challenge_art = ChallengeArtifact(
+            readiness="not_ready",
+            summary="not ready",
+            failure_modes=[FailureMode(
+                id="fm1", assumption_ref="a1", description="critical failure",
+                severity="critical", impact="high", confidence="high",
+                disposition="must_harden",
+            )],
+            next_action="address issues",
+        )
+        orch._maybe_promote_from_gate(run, "challenge", challenge_art)
+        assert run.tier == 3, f"Expected tier=3 after not_ready challenge, got {run.tier}"
+        assert run.tier_promoted_at is not None
+
+    def test_gate_promotion_review_critical_finding(self):
+        """F6: _maybe_promote_from_gate promotes tier on review with critical finding."""
+        from agentcouncil.schemas import ConvergenceResult, Finding
+
+        orch = LinearOrchestrator(
+            registry=_make_test_registry(),
+            runners=_make_stub_runners(),
+        )
+        run = _make_run(run_id="promo-review-crit", tier=1)
+        convergence = ConvergenceResult(
+            final_verdict="pass",
+            exit_reason="all_verified",
+            final_findings=[
+                Finding(
+                    id="f1", title="Critical issue", severity="critical",
+                    impact="high", description="Something critical",
+                    evidence="line 42", locations=["file.py"],
+                    confidence="high", agreement="confirmed", origin="outside",
+                ),
+            ],
+            total_iterations=1,
+        )
+        orch._maybe_promote_from_gate(run, "review_loop", convergence)
+        assert run.tier == 3, f"Expected tier=3 after critical finding, got {run.tier}"
+
+    def test_gate_promotion_no_op_for_clean_gate(self):
+        """F6: _maybe_promote_from_gate does NOT promote on clean gate outcomes."""
+        from agentcouncil.schemas import ChallengeArtifact
+
+        orch = LinearOrchestrator(
+            registry=_make_test_registry(),
+            runners=_make_stub_runners(),
+        )
+        run = _make_run(run_id="promo-clean", tier=2)
+        clean_challenge = ChallengeArtifact(
+            readiness="ready",
+            summary="all good",
+            failure_modes=[],
+            next_action="ship it",
+        )
+        orch._maybe_promote_from_gate(run, "challenge", clean_challenge)
+        assert run.tier == 2, f"Expected tier=2 (no promotion), got {run.tier}"
+        assert run.tier_promoted_at is None

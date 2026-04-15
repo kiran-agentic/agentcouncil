@@ -458,6 +458,63 @@ The Python package also exposes full protocol tools via MCP (`brainstorm`, `revi
 
 Key difference: In library-mode brainstorm, the outside agent proposes first and the lead reacts (outside-first). In skill mode, Claude proposes first with full context (lead-first). A future release may unify the protocol semantics between the two modes.
 
+## Autopilot Pipeline (v2.0)
+
+The autopilot subsystem (`agentcouncil/autopilot/`) sequences work stages through a gated pipeline with typed artifacts, persistent state, and tiered autonomy.
+
+### Pipeline Stages
+
+```
+spec_prep → plan → build → verify → ship
+```
+
+Each stage has a manifest (`manifest.yaml`) declaring its gate type, side-effect level, and retry policy. The `LinearOrchestrator` sequences stages via `allowed_next` links.
+
+### Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `artifacts.py` | 10 Pydantic models (SpecArtifact through GateDecision) with field validators |
+| `loader.py` | StageManifest schema, ManifestLoader, load_default_registry() |
+| `normalizer.py` | GateNormalizer — translates protocol outputs to advance/revise/block |
+| `run.py` | AutopilotRun state model, atomic persist/load/resume, state machine |
+| `orchestrator.py` | LinearOrchestrator — pipeline sequencing, gate loop, approval boundary, retry |
+| `prep.py` | spec_prep runner — codebase research, refinement, readiness check |
+| `verify.py` | verify runner — five-level dispatch, evidence collection |
+| `ship.py` | ship runner — readiness packaging with git info |
+| `router.py` | Rule-based tier classification, sensitive file detection |
+
+### Gate Loop
+
+After each work stage, the orchestrator runs a gate (review_loop, challenge, or none per manifest):
+- **advance** — proceed to next stage
+- **revise** — re-execute the work stage with revision_guidance (capped at max_revise_iterations)
+- **block** — halt with `status=paused_for_approval`, human resumes via `autopilot_resume`
+
+### Three-Tier Autonomy
+
+| Tier | Gate Behavior | Approval |
+|------|--------------|----------|
+| 1 (executor) | Skip gates | No |
+| 2 (council) | Full gate pipeline | No |
+| 3 (approval-gated) | Full gates + human sign-off | Yes |
+
+Tier is classified at run creation (`classify_run` in router.py) and can promote mid-run (never demote) when undeclared sensitive files are touched or gates return critical findings.
+
+### MCP Tools
+
+Four tools exposed via `server.py`:
+- `autopilot_prepare` — validate spec, classify tier, create run
+- `autopilot_start` — execute the full pipeline
+- `autopilot_status` — inspect current run state
+- `autopilot_resume` — continue a paused run from the blocked stage
+
+### Known Limitations (v2.0)
+
+- `plan` and `build` stages use stub runners — real implementations deferred
+- Lineage validators (validate_plan_lineage, etc.) are exported but not called at runtime
+- Single-client model — no concurrency guards on start/resume
+
 ## Key Design Decisions
 
 - **Skills are the primary interface** — they leverage Claude Code's full conversation context
