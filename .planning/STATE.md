@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 32-01-PLAN.md
-last_updated: "2026-04-15T09:41:47.088Z"
+stopped_at: Completed 33-01-PLAN.md
+last_updated: "2026-04-15T09:58:10.458Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
-  completed_phases: 7
-  total_plans: 12
-  completed_plans: 12
+  completed_phases: 8
+  total_plans: 13
+  completed_plans: 13
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Independence before convergence — agents must think independently before seeing each other's proposals
-**Current focus:** Phase 32 — approval-boundary
+**Current focus:** Phase 33 — rule-based-router
 
 ## Current Position
 
-Phase: 33
-Plan: Not started
+Phase: 33 (rule-based-router) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-15
 
@@ -81,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 32-approval-boundary]: [Phase 32]: _classify_stage gates on approval_required=True unconditionally and side_effect_level=external regardless of tier; tier=3 does NOT gate all stages
 - [Phase 32-approval-boundary]: [Phase 32]: Already-blocked checkpoint = already-approved (resume bypass) — calling autopilot_resume IS the approval; no new model fields needed
 - [Phase 32-approval-boundary]: [Phase 32]: Pre-execution guard fires BEFORE marking in_progress to prevent inconsistent intermediate state
+- [Phase 33]: SENSITIVE_PATH_PATTERNS defined in router.py, imported by prep.py — single canonical source for sensitive path classification
+- [Phase 33]: classify_run called exactly once in autopilot_prepare_tool — fires before execution, never on resume to prevent silent demotion
 
 ### Pending Todos
 
@@ -92,6 +94,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T09:39:48.769Z
-Stopped at: Completed 32-01-PLAN.md
+Last session: 2026-04-15T09:58:10.456Z
+Stopped at: Completed 33-01-PLAN.md
 Resume file: None

@@ -383,7 +383,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 33-01-PLAN.md — TDD rule-based router: classify_run, detect_undeclared_sensitive_files, tier promotion wiring
+- [x] 33-01-PLAN.md — TDD rule-based router: classify_run, detect_undeclared_sensitive_files, tier promotion wiring
 
 ### Phase 34: Failure Handling + Dynamic Promotion
 **Goal**: The system recovers gracefully from protocol timeouts, exhausted retries, and mid-execution surprises while maintaining a complete checkpoint for every partial completion
@@ -435,7 +435,7 @@ Plans:
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
 | 32. Approval Boundary | v2.0 | 1/1 | Complete    | 2026-04-15 |
-| 33. Rule-Based Router | v2.0 | 0/1 | Planning | - |
+| 33. Rule-Based Router | v2.0 | 1/1 | Complete   | 2026-04-15 |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/1 | Not started | - |
 
 ---
