@@ -352,9 +352,9 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 31-01-PLAN.md — Vendor workflow content (5 workflow.md files, 3 manifest source_provenance, THIRD_PARTY_NOTICES.md)
-- [ ] 31-02-PLAN.md — prep.py spec_prep stage runner (codebase research, spec refinement, arch council, readiness check)
-- [ ] 31-03-PLAN.md — verify.py + ship.py stage runners (five-level verification, evidence collection, readiness packaging)
+- [x] 31-01-PLAN.md — Vendor workflow content (5 workflow.md files, 3 manifest source_provenance, THIRD_PARTY_NOTICES.md)
+- [x] 31-02-PLAN.md — prep.py spec_prep stage runner (codebase research, spec refinement, arch council, readiness check)
+- [x] 31-03-PLAN.md — verify.py + ship.py stage runners (five-level verification, evidence collection, readiness packaging)
 - [ ] 31-04-PLAN.md — Orchestrator verify-to-build retry loop, server.py runner registration, integration tests
 
 ### Phase 32: Approval Boundary
@@ -424,7 +424,7 @@ Plans:
 | 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 31. Workflows + Spec Prep + Verify | v2.0 | 0/4 | Not started | - |
+| 31. Workflows + Spec Prep + Verify | v2.0 | 3/4 | In Progress|  |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |

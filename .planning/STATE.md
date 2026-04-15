@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 30-02-PLAN.md
-last_updated: "2026-04-15T08:36:23.617Z"
+stopped_at: Completed 31-03-PLAN.md
+last_updated: "2026-04-15T09:19:51.160Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
   completed_phases: 5
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 11
+  completed_plans: 10
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Independence before convergence — agents must think independently before seeing each other's proposals
-**Current focus:** Phase 30 — linear-orchestrator-skeleton
+**Current focus:** Phase 31 — workflows-spec-prep-verify
 
 ## Current Position
 
-Phase: 31
-Plan: Not started
+Phase: 31 (workflows-spec-prep-verify) — EXECUTING
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-04-15
 
@@ -70,6 +70,10 @@ Recent decisions affecting current work:
 - [Phase 30]: [30-01] Injectable gate_runners dict used for test isolation — avoids patching internal methods
 - [Phase 30]: [30-02] autopilot_resume bypasses validate_transition when resetting paused run to running — paused states are terminal sinks per the state machine design
 - [Phase 30]: [30-02] ConvergenceResult stub corrected: exit_reason='all_verified' and total_iterations=1 to match schema
+- [Phase 31]: run_spec_prep silently swallows check_spec_readiness ValueError for minimal-spec (no registry spec) to prevent blocking MVP autonomous runs
+- [Phase 31]: SpecArtifact.model_construct() used in tests to bypass pydantic validators for edge-case readiness tests
+- [Phase 31]: execute_criterion dispatches by verification_level with e2e gated on playwright availability
+- [Phase 31]: run_ship uses git subprocess calls with timeout protection; ShipArtifact rollback_plan always contains head_sha
 
 ### Pending Todos
 
@@ -81,6 +85,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T08:33:28.678Z
-Stopped at: Completed 30-02-PLAN.md
+Last session: 2026-04-15T09:19:44.118Z
+Stopped at: Completed 31-03-PLAN.md
 Resume file: None
