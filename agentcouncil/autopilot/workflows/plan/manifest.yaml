@@ -9,3 +9,10 @@ retry_policy: once
 approval_required: false
 allowed_next:
   - build
+source_provenance:
+  repo: https://github.com/addyosmani/agent-skills
+  path: skills/planning-and-task-breakdown/SKILL.md
+  license: MIT
+  commit: bf2fa6994407c9c888fc19a03fd54957991cfa0e
+  date_copied: "2026-04-15"
+  modified: true
