@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 29-01-PLAN.md
-last_updated: "2026-04-15T08:01:22.836Z"
+stopped_at: Completed 30-01-PLAN.md
+last_updated: "2026-04-15T08:26:59.026Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 0
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -66,6 +66,8 @@ Recent decisions affecting current work:
 - [Phase 29-autopilot-run-state-+-persistence]: AutopilotRun uses use_enum_values=True — status always string literal, never enum member
 - [Phase 29-autopilot-run-state-+-persistence]: resume() is pure function returning (run, registry) tuple — no mutation, orchestrator decides whether to update status
 - [Phase 29-autopilot-run-state-+-persistence]: validate_transition() enforces running as only state with outgoing transitions; all paused/terminal states are sinks
+- [Phase 30]: [30-01] Challenge gate is conditional via gate_type_override: verify default_gate=challenge is overridden to none for tier=2 non-external runs
+- [Phase 30]: [30-01] Injectable gate_runners dict used for test isolation — avoids patching internal methods
 
 ### Pending Todos
 
@@ -77,6 +79,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T08:01:22.834Z
-Stopped at: Completed 29-01-PLAN.md
+Last session: 2026-04-15T08:26:59.024Z
+Stopped at: Completed 30-01-PLAN.md
 Resume file: None
