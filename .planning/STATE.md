@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 31-03-PLAN.md
-last_updated: "2026-04-15T09:19:53.628Z"
+stopped_at: Completed 31-01-PLAN.md
+last_updated: "2026-04-15T09:20:03.685Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
@@ -74,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase 31]: SpecArtifact.model_construct() used in tests to bypass pydantic validators for edge-case readiness tests
 - [Phase 31]: execute_criterion dispatches by verification_level with e2e gated on playwright availability
 - [Phase 31]: run_ship uses git subprocess calls with timeout protection; ShipArtifact rollback_plan always contains head_sha
+- [Phase 31-workflows-spec-prep-verify]: plan/build/ship workflow.md files are editorial adaptations of agent-skills SKILL.md at ~50% survival rate, dropping slash command refs and templates replaced by typed artifacts
+- [Phase 31-workflows-spec-prep-verify]: spec_prep and verify workflow.md are fully AgentCouncil-native with no agent-skills content
 
 ### Pending Todos
 
@@ -85,6 +87,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T09:19:44.118Z
-Stopped at: Completed 31-03-PLAN.md
+Last session: 2026-04-15T09:20:03.683Z
+Stopped at: Completed 31-01-PLAN.md
 Resume file: None
