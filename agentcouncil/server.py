@@ -35,6 +35,10 @@ from agentcouncil.providers.base import OutsideProvider, ProviderError
 from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.session import OutsideSession
 from agentcouncil.schemas import JournalEntry
+from agentcouncil.autopilot.orchestrator import LinearOrchestrator
+from agentcouncil.autopilot.run import AutopilotRun, StageCheckpoint, persist, load_run, resume, validate_transition
+from agentcouncil.autopilot.loader import load_default_registry
+from agentcouncil.autopilot.artifacts import SpecArtifact
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
@@ -1151,6 +1155,94 @@ def journal_get_tool(session_id: str) -> dict:
     from agentcouncil.journal import read_entry
 
     return read_entry(session_id).model_dump()
+
+
+@mcp.tool(name="autopilot_prepare")
+def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
+                            requirements: list[str], acceptance_criteria: list[str],
+                            tier: int = 2) -> dict:
+    """Initialize an autopilot run: validate spec, create run state, persist to disk.
+
+    Call this before autopilot_start. Returns a run_id to use with other tools.
+    """
+    import time as _time
+    import uuid as _uuid
+
+    # Validate spec via SpecArtifact model
+    spec = SpecArtifact(spec_id=spec_id, title=title, objective=objective,
+                        requirements=requirements, acceptance_criteria=acceptance_criteria)
+
+    run_id = f"run-{_uuid.uuid4().hex[:12]}"
+    stages = [
+        StageCheckpoint(stage_name=name, status="pending")
+        for name in ["spec_prep", "plan", "build", "verify", "ship"]
+    ]
+    run = AutopilotRun(
+        run_id=run_id, spec_id=spec_id, status="running",
+        current_stage="spec_prep", tier=tier, stages=stages,
+        started_at=_time.time(), updated_at=_time.time(),
+    )
+    persist(run)
+    return {"run_id": run.run_id, "status": run.status, "current_stage": run.current_stage, "tier": run.tier}
+
+
+@mcp.tool(name="autopilot_start")
+def autopilot_start_tool(run_id: str) -> dict:
+    """Execute the full autopilot pipeline from current stage.
+
+    The run must have been created via autopilot_prepare first.
+    Returns the final run state. For Phase 30, all stages use stub implementations.
+    NOTE: Phase 31 must convert this to async when real workflow content is added.
+    """
+    run = load_run(run_id)
+    if run.status == "completed":
+        return {"run_id": run.run_id, "status": run.status, "message": "Run already completed"}
+
+    registry = load_default_registry()
+    orchestrator = LinearOrchestrator(registry=registry, runners={})
+    # runners={} uses default stub runners inside LinearOrchestrator
+    result = orchestrator.run_pipeline(run)
+    return {
+        "run_id": result.run_id, "status": result.status,
+        "current_stage": result.current_stage,
+        "completed_at": result.completed_at,
+        "stages": [{"stage": s.stage_name, "status": s.status} for s in result.stages],
+    }
+
+
+@mcp.tool(name="autopilot_status")
+def autopilot_status_tool(run_id: str) -> dict:
+    """Return the current state of an autopilot run."""
+    run = load_run(run_id)
+    return {
+        "run_id": run.run_id, "status": run.status,
+        "current_stage": run.current_stage, "tier": run.tier,
+        "stages": [{"stage": s.stage_name, "status": s.status,
+                     "gate_decision": s.gate_decision} for s in run.stages],
+        "failure_reason": run.failure_reason,
+    }
+
+
+@mcp.tool(name="autopilot_resume")
+def autopilot_resume_tool(run_id: str) -> dict:
+    """Resume a paused autopilot run from the blocked stage.
+
+    Only works for runs with status=paused_for_approval or paused_for_revision.
+    """
+    run, artifact_reg = resume(run_id)
+    # Transition back to running
+    validate_transition(run.status, "running")
+    run.status = "running"
+    persist(run)
+
+    registry = load_default_registry()
+    orchestrator = LinearOrchestrator(registry=registry, runners={})
+    result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
+    return {
+        "run_id": result.run_id, "status": result.status,
+        "current_stage": result.current_stage,
+        "stages": [{"stage": s.stage_name, "status": s.status} for s in result.stages],
+    }
 
 
 if __name__ == "__main__":
