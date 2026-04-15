@@ -349,8 +349,13 @@ Plans:
   3. When verification fails, the orchestrator sends `revision_guidance` back to the build stage and re-runs — the retry loop fires at most twice before escalating to `paused_for_approval`
   4. The plan, build, and ship workflow files include the agent-skills attribution header and the repo root contains `THIRD_PARTY_NOTICES.md`
   5. All five workflow directories (spec_prep, plan, build, verify, ship) have manifests that pass loader validation, and the end-to-end test from Phase 30 passes with real workflow content replacing stubs
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 4 plans
+
+Plans:
+- [ ] 31-01-PLAN.md — Vendor workflow content (5 workflow.md files, 3 manifest source_provenance, THIRD_PARTY_NOTICES.md)
+- [ ] 31-02-PLAN.md — prep.py spec_prep stage runner (codebase research, spec refinement, arch council, readiness check)
+- [ ] 31-03-PLAN.md — verify.py + ship.py stage runners (five-level verification, evidence collection, readiness packaging)
+- [ ] 31-04-PLAN.md — Orchestrator verify-to-build retry loop, server.py runner registration, integration tests
 
 ### Phase 32: Approval Boundary
 **Goal**: The orchestrator never executes external side effects without explicit human authorization
@@ -419,10 +424,10 @@ Plans:
 | 28. Gate Normalization Layer | v2.0 | 1/1 | Complete    | 2026-04-15 |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
+| 31. Workflows + Spec Prep + Verify | v2.0 | 0/4 | Not started | - |
 | 32. Approval Boundary | v2.0 | 0/? | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 30 planned (2 plans, 2 waves)*
+*Last updated: 2026-04-15 — Phase 31 planned (4 plans, 2 waves)*
