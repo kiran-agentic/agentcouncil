@@ -25,20 +25,20 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 
 ### Spec Prep
 
-- [ ] **PREP-01**: Codebase research identifies target files, existing patterns, test infrastructure, sensitive areas, verification environment
-- [ ] **PREP-02**: Interactive spec refinement asks 0-3 blocking questions with 5 hard max, presents full understanding with assumptions
-- [ ] **PREP-03**: Conditional architecture council brainstorm triggers for cross-module, schema/API, security, or ambiguous work
-- [ ] **PREP-04**: Spec readiness check validates requirements, acceptance criteria, verification feasibility, and delivery clarity before autonomous execution
-- [ ] **PREP-05**: SpecPrepArtifact distinguishes binding decisions from advisory context
+- [x] **PREP-01**: Codebase research identifies target files, existing patterns, test infrastructure, sensitive areas, verification environment
+- [x] **PREP-02**: Interactive spec refinement asks 0-3 blocking questions with 5 hard max, presents full understanding with assumptions
+- [x] **PREP-03**: Conditional architecture council brainstorm triggers for cross-module, schema/API, security, or ambiguous work
+- [x] **PREP-04**: Spec readiness check validates requirements, acceptance criteria, verification feasibility, and delivery clarity before autonomous execution
+- [x] **PREP-05**: SpecPrepArtifact distinguishes binding decisions from advisory context
 
 ### Verification
 
-- [ ] **VER-01**: Five verification levels: static, unit, integration, smoke, e2e
-- [ ] **VER-02**: Real integration testing — start services, hit real endpoints, check real state (no mocks at integration/e2e level)
-- [ ] **VER-03**: Per-acceptance-criterion evidence with structured command results, service lifecycle, and artifacts
+- [x] **VER-01**: Five verification levels: static, unit, integration, smoke, e2e
+- [x] **VER-02**: Real integration testing — start services, hit real endpoints, check real state (no mocks at integration/e2e level)
+- [x] **VER-03**: Per-acceptance-criterion evidence with structured command results, service lifecycle, and artifacts
 - [ ] **VER-04**: Verify → build retry loop with actionable failure evidence (max 2 retries, hard cap 3)
-- [ ] **VER-05**: Generated integration probes when project has no existing test infrastructure
-- [ ] **VER-06**: Playwright/browser automation for frontend changes
+- [x] **VER-05**: Generated integration probes when project has no existing test infrastructure
+- [x] **VER-06**: Playwright/browser automation for frontend changes
 
 ### Autonomy & Safety
 
@@ -52,7 +52,7 @@ Requirements for Autopilot — Council-Governed Autonomous Delivery. Each maps t
 
 - [x] **PERS-01**: AutopilotRun state persisted to ~/.agentcouncil/autopilot/{run_id}.json with atomic writes
 - [x] **PERS-02**: Resume from paused_for_approval and paused_for_revision with artifact reconstruction
-- [ ] **PERS-03**: Ship produces structured readiness packet with branch/SHA, verification status, release notes, rollback plan
+- [x] **PERS-03**: Ship produces structured readiness packet with branch/SHA, verification status, release notes, rollback plan
 - [x] **PERS-04**: MCP tools: autopilot_prepare, autopilot_start, autopilot_status, autopilot_resume
 
 ### Workflow Content
@@ -107,17 +107,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ORCH-03 | Phase 30 | Complete |
 | ORCH-04 | Phase 28 | Complete |
 | ORCH-05 | Phase 30 | Complete |
-| PREP-01 | Phase 31 | Pending |
-| PREP-02 | Phase 31 | Pending |
-| PREP-03 | Phase 31 | Pending |
-| PREP-04 | Phase 31 | Pending |
-| PREP-05 | Phase 31 | Pending |
-| VER-01 | Phase 31 | Pending |
-| VER-02 | Phase 31 | Pending |
-| VER-03 | Phase 31 | Pending |
+| PREP-01 | Phase 31 | Complete |
+| PREP-02 | Phase 31 | Complete |
+| PREP-03 | Phase 31 | Complete |
+| PREP-04 | Phase 31 | Complete |
+| PREP-05 | Phase 31 | Complete |
+| VER-01 | Phase 31 | Complete |
+| VER-02 | Phase 31 | Complete |
+| VER-03 | Phase 31 | Complete |
 | VER-04 | Phase 31 | Pending |
-| VER-05 | Phase 31 | Pending |
-| VER-06 | Phase 31 | Pending |
+| VER-05 | Phase 31 | Complete |
+| VER-06 | Phase 31 | Complete |
 | SAFE-01 | Phase 32 | Pending |
 | SAFE-02 | Phase 32 | Pending |
 | SAFE-03 | Phase 33 | Pending |
@@ -125,7 +125,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAFE-05 | Phase 34 | Pending |
 | PERS-01 | Phase 29 | Complete |
 | PERS-02 | Phase 29 | Complete |
-| PERS-03 | Phase 31 | Pending |
+| PERS-03 | Phase 31 | Complete |
 | PERS-04 | Phase 30 | Complete |
 | WORK-01 | Phase 31 | Pending |
 | WORK-02 | Phase 31 | Pending |
