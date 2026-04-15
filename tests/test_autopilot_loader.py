@@ -374,3 +374,23 @@ def test_default_registry_stage_types_are_work():
         assert entry.manifest.stage_type == "work", (
             f"Stage '{stage_name}' has unexpected stage_type: {entry.manifest.stage_type}"
         )
+
+
+def test_vendored_workflow_attribution():
+    """WORK-01: plan/build/ship workflow.md have attribution headers."""
+    registry = load_default_registry()
+    for stage in ["plan", "build", "ship"]:
+        content = registry[stage].workflow_content
+        assert "Originally from: https://github.com/addyosmani/agent-skills" in content, (
+            f"{stage} workflow missing agent-skills attribution header"
+        )
+
+
+def test_default_registry_workflow_content_is_real():
+    """WORK-02/WORK-03: All workflow.md files have substantial content (>500 chars)."""
+    registry = load_default_registry()
+    for stage_name, entry in registry.items():
+        assert len(entry.workflow_content) > 500, (
+            f"{stage_name} workflow.md has only {len(entry.workflow_content)} chars — "
+            "expected >500 chars of real content (not placeholder)"
+        )

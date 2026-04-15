@@ -39,6 +39,9 @@ from agentcouncil.autopilot.orchestrator import LinearOrchestrator
 from agentcouncil.autopilot.run import AutopilotRun, StageCheckpoint, persist, load_run, resume, validate_transition
 from agentcouncil.autopilot.loader import load_default_registry
 from agentcouncil.autopilot.artifacts import SpecArtifact
+from agentcouncil.autopilot.prep import run_spec_prep
+from agentcouncil.autopilot.verify import run_verify
+from agentcouncil.autopilot.ship import run_ship
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
@@ -1191,16 +1194,18 @@ def autopilot_start_tool(run_id: str) -> dict:
     """Execute the full autopilot pipeline from current stage.
 
     The run must have been created via autopilot_prepare first.
-    Returns the final run state. For Phase 30, all stages use stub implementations.
-    NOTE: Phase 31 must convert this to async when real workflow content is added.
+    Returns the final run state. Uses real runners for spec_prep, verify, and ship stages.
+    Plan and build stages use stub runners.
     """
     run = load_run(run_id)
     if run.status == "completed":
         return {"run_id": run.run_id, "status": run.status, "message": "Run already completed"}
 
     registry = load_default_registry()
-    orchestrator = LinearOrchestrator(registry=registry, runners={})
-    # runners={} uses default stub runners inside LinearOrchestrator
+    orchestrator = LinearOrchestrator(
+        registry=registry,
+        runners={"spec_prep": run_spec_prep, "verify": run_verify, "ship": run_ship},
+    )
     result = orchestrator.run_pipeline(run)
     return {
         "run_id": result.run_id, "status": result.status,
@@ -1238,7 +1243,10 @@ def autopilot_resume_tool(run_id: str) -> dict:
     persist(run)
 
     registry = load_default_registry()
-    orchestrator = LinearOrchestrator(registry=registry, runners={})
+    orchestrator = LinearOrchestrator(
+        registry=registry,
+        runners={"spec_prep": run_spec_prep, "verify": run_verify, "ship": run_ship},
+    )
     result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
     return {
         "run_id": result.run_id, "status": result.status,
