@@ -224,7 +224,8 @@ class LinearOrchestrator:
         self._normalizer = normalizer if normalizer is not None else GateNormalizer()
         self._max_revise = max_revise_iterations
         self._gate_runners = gate_runners or {}
-        self._build_retry_count: int = 0
+        # Note: build_retry_count is persisted on AutopilotRun, not here.
+        # self._build_retry_count removed — use run.build_retry_count instead.
         self._last_raw_artifact: Any = None
 
     # ------------------------------------------------------------------
@@ -341,8 +342,8 @@ class LinearOrchestrator:
                     elif isinstance(verify_art, dict):
                         rev_guidance = verify_art.get("revision_guidance")
 
-                    if self._build_retry_count < 2:
-                        self._build_retry_count += 1
+                    if run.build_retry_count < 2:
+                        run.build_retry_count += 1
                         # Re-run build stage with revision_guidance injected
                         build_entry = self._registry.get("build")
                         build_runner = self._runners.get("build", _default_stub_runner("build"))
@@ -385,7 +386,22 @@ class LinearOrchestrator:
                                         run, artifact_registry, "verify", verify_runner, verify_entry,
                                         gate_type_override=verify_gate_override,
                                     )
-                                    # Re-evaluate: continue the while loop at verify
+                                    # Check if retry verify also wants retry_build
+                                    # If so, loop back to the retry check (current_stage stays "verify")
+                                    # If not, advance past verify to the next stage
+                                    retry_verify_art = artifact_registry.get("verify")
+                                    retry_verify_rec: Optional[str] = None
+                                    if hasattr(retry_verify_art, "retry_recommendation"):
+                                        retry_verify_rec = retry_verify_art.retry_recommendation
+                                    elif isinstance(retry_verify_art, dict):
+                                        retry_verify_rec = retry_verify_art.get("retry_recommendation")
+                                    if retry_verify_rec == "retry_build" and run.status == "running":
+                                        # Stay at verify — the while loop's retry check will handle it
+                                        continue
+                                    elif run.status == "running":
+                                        # Verify passed — advance past verify to next stage (ship)
+                                        allowed = verify_entry.manifest.allowed_next
+                                        current_stage = allowed[0] if allowed else None
                                     continue
                     else:
                         # Max retries exceeded — escalate to paused_for_approval

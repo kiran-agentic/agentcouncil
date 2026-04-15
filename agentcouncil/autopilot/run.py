@@ -106,6 +106,7 @@ class AutopilotRun(BaseModel):
     updated_at: float
     completed_at: Optional[float] = None
     failure_reason: Optional[str] = None
+    build_retry_count: int = 0
 
 
 # ---------------------------------------------------------------------------

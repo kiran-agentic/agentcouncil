@@ -1164,7 +1164,7 @@ def journal_get_tool(session_id: str) -> dict:
 @mcp.tool(name="autopilot_prepare")
 def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
                             requirements: list[str], acceptance_criteria: list[str],
-                            tier: int = 2, target_files: list[str] = []) -> dict:
+                            tier: int = 2, target_files: list[str] | None = None) -> dict:
     """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
 
     Call this before autopilot_start. Returns a run_id to use with other tools.
@@ -1173,6 +1173,7 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
     import time as _time
     import uuid as _uuid
 
+    target_files = target_files or []
     # Validate spec via SpecArtifact model (include target_files for SAFE-03 classification)
     spec = SpecArtifact(spec_id=spec_id, title=title, objective=objective,
                         requirements=requirements, acceptance_criteria=acceptance_criteria,
