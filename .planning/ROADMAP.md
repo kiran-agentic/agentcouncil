@@ -304,7 +304,10 @@ Plans:
   2. Passing a `ReviewArtifact` with `verdict=revise` produces `GateDecision(decision="revise")` with non-empty `revision_guidance`
   3. Passing an unrecognized or malformed protocol output produces `GateDecision(decision="block")` with a rationale — no exception raised
   4. Unit tests cover all five protocol types (brainstorm, review, review_loop, challenge, decide) and every mapped outcome from the normalization table
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 28-01-PLAN.md — TDD GateNormalizer: all 5 protocol types + error handling + package re-export
 
 ### Phase 29: Autopilot Run State + Persistence
 **Goal**: Autopilot execution state survives process restarts and a paused run can be fully reconstructed from disk with no in-memory dependency
@@ -405,8 +408,8 @@ Plans:
 | 24. Auto-Fallback + Backward Compat | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 25. Documentation | v1.4 | 2/2 | Complete | 2026-04-13 |
 | 26. Artifact Schemas | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 27. Manifest Schema + Loader | v2.0 | 0/1 | Not started | - |
-| 28. Gate Normalization Layer | v2.0 | 0/? | Not started | - |
+| 27. Manifest Schema + Loader | v2.0 | 0/1 | Complete    | 2026-04-15 |
+| 28. Gate Normalization Layer | v2.0 | 0/1 | Not started | - |
 | 29. Autopilot Run State + Persistence | v2.0 | 0/? | Not started | - |
 | 30. Linear Orchestrator Skeleton | v2.0 | 0/? | Not started | - |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 0/? | Not started | - |
@@ -415,4 +418,4 @@ Plans:
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-15 — Phase 27 planned (1 plan, 1 wave)*
+*Last updated: 2026-04-15 — Phase 28 planned (1 plan, 1 wave)*
