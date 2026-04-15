@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 31-04-PLAN.md
-last_updated: "2026-04-15T09:28:58.970Z"
+stopped_at: Completed 32-01-PLAN.md
+last_updated: "2026-04-15T09:39:48.772Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 9
-  completed_phases: 6
-  total_plans: 11
-  completed_plans: 11
+  completed_phases: 7
+  total_plans: 12
+  completed_plans: 12
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Independence before convergence — agents must think independently before seeing each other's proposals
-**Current focus:** Phase 31 — workflows-spec-prep-verify
+**Current focus:** Phase 32 — approval-boundary
 
 ## Current Position
 
-Phase: 32
-Plan: Not started
+Phase: 32 (approval-boundary) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-15
 
@@ -78,6 +78,9 @@ Recent decisions affecting current work:
 - [Phase 31-workflows-spec-prep-verify]: spec_prep and verify workflow.md are fully AgentCouncil-native with no agent-skills content
 - [Phase 31]: Verify->build retry loop uses closure wrapper to inject revision_guidance without changing _run_stage_with_gate signature
 - [Phase 31]: server.py registers real runners for spec_prep/verify/ship; plan and build remain stubs until Phase 32
+- [Phase 32-approval-boundary]: [Phase 32]: _classify_stage gates on approval_required=True unconditionally and side_effect_level=external regardless of tier; tier=3 does NOT gate all stages
+- [Phase 32-approval-boundary]: [Phase 32]: Already-blocked checkpoint = already-approved (resume bypass) — calling autopilot_resume IS the approval; no new model fields needed
+- [Phase 32-approval-boundary]: [Phase 32]: Pre-execution guard fires BEFORE marking in_progress to prevent inconsistent intermediate state
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-15T09:25:20.208Z
-Stopped at: Completed 31-04-PLAN.md
+Last session: 2026-04-15T09:39:48.769Z
+Stopped at: Completed 32-01-PLAN.md
 Resume file: None

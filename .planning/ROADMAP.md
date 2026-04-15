@@ -369,7 +369,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
+- [x] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
 
 ### Phase 33: Rule-Based Router
 **Goal**: Every stage receives an autonomy tier assignment based on declared intent before execution begins, and tier promotions are sticky for the remainder of the run
@@ -434,7 +434,7 @@ Plans:
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
-| 32. Approval Boundary | v2.0 | 0/1 | Not started | - |
+| 32. Approval Boundary | v2.0 | 1/1 | Complete   | 2026-04-15 |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 
