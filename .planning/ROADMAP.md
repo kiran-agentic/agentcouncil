@@ -366,7 +366,10 @@ Plans:
   2. A stage with `approval_required: true` in its manifest always pauses for human approval regardless of autonomy tier
   3. Local workspace changes (`side_effect_level: local`) proceed through the pipeline without triggering an approval pause
   4. A run paused for approval can be resumed via `autopilot_resume` and continues from the exact stage where it paused
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
 
 ### Phase 33: Rule-Based Router
 **Goal**: Every stage receives an autonomy tier assignment based on declared intent before execution begins, and tier promotions are sticky for the remainder of the run
@@ -377,7 +380,10 @@ Plans:
   2. A Tier 1 stage skips all protocol gates and executes directly; a Tier 2 stage runs through the full gate pipeline; a Tier 3 stage requires council deliberation and human sign-off before execution
   3. When a stage that began at Tier 1 or Tier 2 touches an undeclared sensitive file during execution, the run promotes to the higher tier and all subsequent stages in that run use the promoted tier — no silent demotion occurs
   4. Tier classification is logged in the AutopilotRun state so the classification decision is auditable after the run completes
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
 
 ### Phase 34: Failure Handling + Dynamic Promotion
 **Goal**: The system recovers gracefully from protocol timeouts, exhausted retries, and mid-execution surprises while maintaining a complete checkpoint for every partial completion
@@ -388,7 +394,10 @@ Plans:
   2. After exhausting retries, the orchestrator sets `status=paused_for_approval` and populates `AutopilotRun.failure_reason` — the run state is inspectable without re-running
   3. A run that fails mid-pipeline has a `StageCheckpoint` for each completed stage with its serialized artifact snapshot, and `autopilot_resume` continues from the last successful checkpoint — not from the beginning
   4. Dynamic tier promotion fires when the challenge gate returns `not_ready` or a review gate finds a `critical` or `high` severity finding — the promotion is reflected in the persisted run state before the next stage executes
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 32-01-PLAN.md — TDD approval boundary: _classify_stage, pre-execution guard, resume after approval
 
 ## Progress
 
@@ -425,7 +434,7 @@ Plans:
 | 29. Autopilot Run State + Persistence | v2.0 | 0/1 | Complete    | 2026-04-15 |
 | 30. Linear Orchestrator Skeleton | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 31. Workflows + Spec Prep + Verify | v2.0 | 4/4 | Complete    | 2026-04-15 |
-| 32. Approval Boundary | v2.0 | 0/? | Not started | - |
+| 32. Approval Boundary | v2.0 | 0/1 | Not started | - |
 | 33. Rule-Based Router | v2.0 | 0/? | Not started | - |
 | 34. Failure Handling + Dynamic Promotion | v2.0 | 0/? | Not started | - |
 

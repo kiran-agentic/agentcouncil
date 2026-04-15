@@ -1013,3 +1013,266 @@ class TestVerifyRetryLoop:
         assert build_call_guidances[1] == "Fix the import error before retrying build", (
             f"Second build call should have revision_guidance, got {build_call_guidances[1]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for TestApprovalBoundary
+# ---------------------------------------------------------------------------
+
+
+def _make_external_stage_registry() -> dict[str, StageRegistryEntry]:
+    """Return a modified registry where build has side_effect_level=external.
+
+    This creates a registry where the approval guard should fire at build
+    (build has review_loop gate by default, now with external side effects).
+    """
+    registry = load_default_registry()
+    build_entry = registry["build"]
+    raw = build_entry.manifest.model_dump()
+    raw["side_effect_level"] = "external"
+    new_manifest = StageManifest(**raw)
+    registry["build"] = StageRegistryEntry(
+        manifest=new_manifest,
+        workflow_content=build_entry.workflow_content,
+    )
+    return registry
+
+
+def _make_approval_required_registry() -> dict[str, StageRegistryEntry]:
+    """Return a modified registry where plan has approval_required=True.
+
+    plan has review_loop gate and side_effect_level=none, so this tests the
+    unconditional approval_required flag.
+    """
+    registry = load_default_registry()
+    plan_entry = registry["plan"]
+    raw = plan_entry.manifest.model_dump()
+    raw["approval_required"] = True
+    new_manifest = StageManifest(**raw)
+    registry["plan"] = StageRegistryEntry(
+        manifest=new_manifest,
+        workflow_content=plan_entry.workflow_content,
+    )
+    return registry
+
+
+# ---------------------------------------------------------------------------
+# TestApprovalBoundary — SAFE-01 and SAFE-02 behaviors
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalBoundary:
+    """Tests for SAFE-01 (three-tier classification) and SAFE-02 (pre-execution approval gate)."""
+
+    # ------------------------------------------------------------------
+    # _classify_stage unit tests (tests 1-5, SAFE-01)
+    # ------------------------------------------------------------------
+
+    def test_classify_executor_tier1_gate_none(self, run_dir):
+        """_classify_stage returns 'executor' for tier=1 run with default_gate=none manifest."""
+        registry = _make_test_registry()
+        orchestrator = LinearOrchestrator(registry=registry, runners=_make_stub_runners())
+        run = _make_run(run_id="classify-executor", tier=1)
+        # spec_prep has default_gate=none and side_effect_level=none, approval_required=False
+        entry = registry["spec_prep"]
+        result = orchestrator._classify_stage(run, entry)
+        assert result == "executor", f"Expected 'executor', got {result!r}"
+
+    def test_classify_council_tier2_gate_review_loop_local(self, run_dir):
+        """_classify_stage returns 'council' for tier=2 run with review_loop gate and local side effects."""
+        registry = _make_test_registry()
+        orchestrator = LinearOrchestrator(registry=registry, runners=_make_stub_runners())
+        run = _make_run(run_id="classify-council", tier=2)
+        # build has default_gate=review_loop and side_effect_level=local
+        entry = registry["build"]
+        assert entry.manifest.default_gate == "review_loop"
+        assert entry.manifest.side_effect_level == "local"
+        result = orchestrator._classify_stage(run, entry)
+        assert result == "council", f"Expected 'council', got {result!r}"
+
+    def test_classify_approval_gated_tier2_external(self, run_dir):
+        """_classify_stage returns 'approval-gated' for tier=2 run with side_effect_level=external."""
+        registry = _make_external_stage_registry()
+        orchestrator = LinearOrchestrator(registry=registry, runners=_make_stub_runners())
+        run = _make_run(run_id="classify-external", tier=2)
+        # build has been modified to side_effect_level=external
+        entry = registry["build"]
+        assert entry.manifest.side_effect_level == "external"
+        result = orchestrator._classify_stage(run, entry)
+        assert result == "approval-gated", f"Expected 'approval-gated', got {result!r}"
+
+    def test_classify_approval_gated_approval_required_true(self, run_dir):
+        """_classify_stage returns 'approval-gated' when approval_required=True regardless of side_effect_level."""
+        registry = _make_approval_required_registry()
+        orchestrator = LinearOrchestrator(registry=registry, runners=_make_stub_runners())
+        # Use tier=1 — even executor tier must be approval-gated if approval_required=True
+        run = _make_run(run_id="classify-approval-required", tier=1)
+        # plan has approval_required=True and side_effect_level=none
+        entry = registry["plan"]
+        assert entry.manifest.approval_required is True
+        assert entry.manifest.side_effect_level == "none"
+        result = orchestrator._classify_stage(run, entry)
+        assert result == "approval-gated", (
+            f"Expected 'approval-gated' for approval_required=True, got {result!r}"
+        )
+
+    def test_classify_approval_gated_tier3_external(self, run_dir):
+        """_classify_stage returns 'approval-gated' for tier=3 run with side_effect_level=external."""
+        registry = _make_external_stage_registry()
+        orchestrator = LinearOrchestrator(registry=registry, runners=_make_stub_runners())
+        run = _make_run(run_id="classify-tier3-external", tier=3)
+        entry = registry["build"]
+        assert entry.manifest.side_effect_level == "external"
+        result = orchestrator._classify_stage(run, entry)
+        assert result == "approval-gated", f"Expected 'approval-gated' for tier=3+external, got {result!r}"
+
+    # ------------------------------------------------------------------
+    # Approval guard integration tests (tests 6-9, SAFE-02)
+    # ------------------------------------------------------------------
+
+    def test_external_stage_pauses_before_execution(self, run_dir):
+        """Pipeline with side_effect_level=external pauses at paused_for_approval BEFORE runner fires."""
+        registry = _make_external_stage_registry()
+        runners = _make_stub_runners()
+
+        # Track calls on the build runner
+        build_call_count = [0]
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            build_call_count[0] += 1
+            return _stub_build_artifact()
+
+        runners["build"] = tracking_build_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="external-pauses-before-exec", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval, got {result.status!r}"
+        )
+        assert build_call_count[0] == 0, (
+            f"Runner must NOT fire before approval: call count={build_call_count[0]}"
+        )
+        assert result.current_stage == "build", (
+            f"Expected current_stage=build, got {result.current_stage!r}"
+        )
+        build_checkpoint = next(
+            (c for c in result.stages if c.stage_name == "build"), None
+        )
+        assert build_checkpoint is not None
+        assert build_checkpoint.status == "blocked", (
+            f"Expected build checkpoint status=blocked, got {build_checkpoint.status!r}"
+        )
+
+    def test_approval_required_true_pauses_regardless_of_tier(self, run_dir):
+        """Pipeline with approval_required=True stage pauses regardless of tier (even tier=1)."""
+        registry = _make_approval_required_registry()
+        runners = _make_stub_runners()
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        # tier=1 (executor) — should still pause because approval_required=True
+        run = _make_run(run_id="approval-required-tier1", tier=1)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "paused_for_approval", (
+            f"Expected paused_for_approval for approval_required=True on tier=1, got {result.status!r}"
+        )
+        assert result.current_stage == "plan", (
+            f"Expected current_stage=plan, got {result.current_stage!r}"
+        )
+
+    def test_local_stage_no_approval_pause(self, run_dir):
+        """Pipeline with side_effect_level=local proceeds without approval pause."""
+        # Default registry: all stages have side_effect_level=none or local, approval_required=False
+        registry = _make_test_registry()
+        runners = _make_stub_runners()
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="local-no-pause", tier=2)
+        result = orchestrator.run_pipeline(run)
+
+        assert result.status == "completed", (
+            f"Expected completed (no approval pause for local stages), got {result.status!r}"
+        )
+
+    def test_resume_from_approval_pause_completes(self, run_dir):
+        """Block at external stage, resume by setting status=running; pipeline completes."""
+        registry = _make_external_stage_registry()
+        runners = _make_stub_runners()
+
+        # Track build runner calls across both runs
+        build_call_count = [0]
+
+        def tracking_build_runner(
+            run: AutopilotRun, reg: dict, guidance: Optional[str] = None
+        ):
+            build_call_count[0] += 1
+            return _stub_build_artifact()
+
+        runners["build"] = tracking_build_runner
+
+        gate_runners = {
+            "review_loop": _AdvanceGate(),
+            "challenge": _AdvanceGate(),
+        }
+
+        # First run: should pause at build (external)
+        orchestrator = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        run = _make_run(run_id="resume-approval-pause", tier=2)
+        blocked_run = orchestrator.run_pipeline(run)
+        assert blocked_run.status == "paused_for_approval", (
+            f"Expected paused_for_approval after first run, got {blocked_run.status!r}"
+        )
+        assert build_call_count[0] == 0, (
+            "Build runner must not fire during first (approval-paused) run"
+        )
+
+        # Second run: load run, set status=running, run again (this is the resume/approval flow)
+        from agentcouncil.autopilot.run import load_run
+        resumed_run = load_run("resume-approval-pause")
+        resumed_run.status = "running"  # type: ignore[assignment]
+
+        orchestrator2 = LinearOrchestrator(
+            registry=registry,
+            runners=runners,
+            gate_runners=gate_runners,
+        )
+        result = orchestrator2.run_pipeline(resumed_run)
+
+        assert result.status == "completed", (
+            f"Expected completed after resume+approval, got {result.status!r}"
+        )
+        assert build_call_count[0] >= 1, (
+            f"Build runner must fire during second (resumed) run, got call_count={build_call_count[0]}"
+        )
