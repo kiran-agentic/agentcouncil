@@ -1,15 +1,20 @@
 ---
 name: autopilot
-description: Run the AgentCouncil autopilot pipeline. Validates a spec via autopilot_prepare, then Claude follows proven workflow recipes to plan and build the work, then the orchestrator handles verify and ship through real runners and gate logic.
-allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume
+description: Council-governed autonomous delivery. Claude follows workflow recipes to plan and build; independent agents review at every stage transition. The full pipeline — spec, plan, build, verify, ship — with review loops and conditional challenge gates.
+allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
 argument-hint: [what to build — describe the feature, fix, or change]
 ---
 
 # AgentCouncil Autopilot
 
-You are running the AgentCouncil autopilot workflow. The pipeline validates your spec, classifies the work tier, then you plan and build the work following proven workflow recipes. The orchestrator runs verify and ship through real runners and gate logic.
+You are running the AgentCouncil autopilot pipeline — council-governed autonomous software delivery. You follow proven workflow recipes to plan and build. An independent agent reviews your work at every stage transition. No single agent's judgment goes unchecked.
 
 **Intent:** $ARGUMENTS
+
+**Pipeline:**
+```
+spec_prep → REVIEW_LOOP → plan → REVIEW_LOOP → build → REVIEW_LOOP → verify → CHALLENGE? → ship
+```
 
 ## Protocol — follow these steps exactly
 
@@ -33,141 +38,214 @@ From the intent, construct:
 - **target_files**: Files likely created or modified (paths with `auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/` trigger tier 3)
 - **tier**: 1 (low-risk), 2 (standard, default), or 3 (sensitive)
 
-Display the spec:
-
-```
-## Autopilot Spec
-
-**ID:** {spec_id}
-**Title:** {title}
-**Objective:** {objective}
-**Tier:** {tier}
-
-**Requirements:**
-- {each requirement}
-
-**Acceptance Criteria:**
-- {each criterion}
-
-**Target Files:**
-- {each file}
-```
-
-Ask: "Start with this spec?"
+Display the spec and ask: "Start with this spec?"
 
 ### Step 3: Validate and register the run
 
 Call `mcp__agentcouncil__autopilot_prepare` with all spec fields.
 
-This validates the spec (Pydantic model checks), classifies the tier from target_files, and persists the run. Save the returned `run_id` and the full `SpecPrepArtifact` (spec, research findings, clarifications).
-
-Display:
+Save the returned `run_id` and `tier`. Display:
 ```
 Spec validated. Run: {run_id}
 Tier: {tier} ({reason})
-
-Now planning...
 ```
 
-### Step 4: Plan (follow the plan workflow recipe)
+### Step 4: Gate — review the spec
 
-Read `agentcouncil/autopilot/workflows/plan/workflow.md` — this is the execution recipe for the plan stage.
+Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
+- **artifact**: The full spec text (requirements, acceptance criteria, target files, constraints)
+- **artifact_type**: `"plan"`
+- **review_objective**: `"Review this spec for completeness, feasibility, and risk before planning begins"`
+- **focus_areas**: `["requirements clarity", "acceptance criteria testability", "scope boundaries", "missing edge cases"]`
 
-Then follow the 5-step planning process from the recipe:
+**Handle the gate decision from `final_verdict`:**
+- **`pass`** → proceed to Step 5
+- **`revise`** → read the `final_findings`, fix the spec, display changes, and re-run this gate (max 2 revisions, then ask user)
+- **`escalate`** → display findings, stop, and ask the user how to proceed
 
-1. **Parse the spec completely** — read all requirements, acceptance criteria, non-goals, and research findings from the `SpecPrepArtifact`. Do not begin decomposing until the full spec is internalized.
-2. **Identify natural decomposition boundaries** — data model changes before logic, interfaces before implementations, shared utilities before callers.
-3. **Size and order tasks** — use the XS/S/M/L scale from the recipe. XL tasks are a planning failure — split them.
-4. **Write acceptance probes** — every acceptance criterion from the spec must map to at least one `AcceptanceProbe`. Specify `verification_level`, `mock_policy`, and `expected_observation` for each.
-5. **Write execution order and verification strategy** — `execution_order` lists all `task_id` values in run sequence. `verification_strategy` describes the overall test approach.
+### Step 5: Plan (follow the plan workflow recipe)
 
-Produce a structured task breakdown matching the `PlanArtifact` shape:
+Read `agentcouncil/autopilot/workflows/plan/workflow.md` — this is the execution recipe.
+
+Follow the 5-step planning process:
+
+1. **Parse the spec completely** — all requirements, acceptance criteria, non-goals, research findings. Do not decompose until fully internalized.
+2. **Identify natural decomposition boundaries** — schema before logic, interfaces before implementations, shared utilities before callers.
+3. **Size and order tasks** — XS/S/M/L scale. XL = split it.
+4. **Write acceptance probes** — every acceptance criterion maps to at least one probe. Specify `verification_level`, `mock_policy`, `expected_observation`.
+5. **Write execution order and verification strategy**.
+
+Display the plan:
 
 ```
 ## Plan: {spec_id}
 
 **Verification Strategy:** {narrative}
 
-**Tasks:**
 | Task ID | Title | Complexity | Depends On | Target Files |
 |---------|-------|------------|------------|--------------|
-| task-01 | ...   | small/medium/large | — | ... |
-| task-02 | ...   | ...        | task-01    | ... |
+| task-01 | ...   | small      | —          | ...          |
 
-**Acceptance Probes:**
 | Probe ID | Criterion | Level | Mock Policy | Expected Observation |
 |----------|-----------|-------|-------------|----------------------|
-| probe-01 | ac-0: ... | unit  | forbidden   | ... |
+| probe-01 | ac-0: ... | unit  | forbidden   | ...                  |
 
 **Execution Order:** task-01, task-02, ...
 ```
 
-Display the plan and ask: "Proceed with this plan?"
+### Step 6: Gate — review the plan
 
-Wait for confirmation before starting build.
+Call `mcp__agentcouncil__review_loop`:
+- **artifact**: The full plan text (tasks, probes, execution order, verification strategy)
+- **artifact_type**: `"plan"`
+- **review_objective**: `"Review this implementation plan for completeness, ordering, risk, and verification coverage"`
+- **focus_areas**: `["task decomposition", "dependency ordering", "acceptance probe coverage", "scope creep"]`
 
-### Step 5: Build (follow the build workflow recipe per task)
+**Handle the gate decision:**
+- **`pass`** → ask user "Proceed with this plan?" and wait for confirmation, then go to Step 7
+- **`revise`** → read findings, revise the plan, display changes, re-run this gate (max 2 revisions)
+- **`escalate`** → display findings, stop, ask user
 
-Read `agentcouncil/autopilot/workflows/build/workflow.md` — this is the execution recipe for the build stage.
+### Step 7: Build (follow the build workflow recipe per task)
 
-For each task in `execution_order`, follow the increment cycle from the recipe:
+Read `agentcouncil/autopilot/workflows/build/workflow.md` — this is the execution recipe.
 
-**Implement:** Make the minimal change required. Touch only `task.target_files` unless new evidence demands otherwise. If you must touch additional files, document them in evidence.
+For each task in `execution_order`, follow the increment cycle:
 
-**Test:** Run test commands covering this task. Do not advance to the next task if tests fail. Fix the implementation, not the tests.
+**Implement:** Make the minimal change required. Touch only `task.target_files` unless deviation is documented.
 
-**Verify:** Check the task's own `acceptance_criteria`. Run the `AcceptanceProbe.command_hint` for related probes where applicable.
+**Test:** Run test commands. Do not advance if tests fail. Fix the implementation, not the tests.
 
-**Commit:** Make a focused commit containing only this task's changes. Format: `{type}({scope}): {description}` where type is `feat`/`fix`/`test`/`refactor`/`chore`. Record the SHA.
+**Verify:** Check the task's `acceptance_criteria` are met.
 
-**Record Evidence:** Produce a `BuildEvidence` entry with:
-- `task_id` — the task just completed
+**Commit:** Focused commit: `{type}({scope}): {description}`. Record the SHA.
+
+**Record Evidence:** For each task, note:
+- `task_id` — the task completed
 - `files_changed` — every file touched
 - `test_results` — test output summary
-- `verification_notes` — how the task's acceptance criteria were checked
+- `verification_notes` — how acceptance criteria were checked
 
-Follow these rules from the build recipe:
-- **Rule 0:** One task at a time. Do not start task N+1 until task N has a green test run and a commit.
-- **Rule 1:** The plan is the contract. Do not silently expand scope.
-- **Rule 2:** Tests travel with the code. New behavior requires new tests.
-- **Rule 3:** Never commit broken tests.
-- **Rule 4:** Evidence is not optional. Empty `verification_notes` will cause the verify stage to treat the task as unverified.
-- **Rule 5:** Commit SHAs are the audit trail. Record every SHA.
+Build rules (from the recipe):
+- **Rule 0:** One task at a time — no multi-task changes
+- **Rule 1:** The plan is the contract — no silent scope expansion
+- **Rule 2:** Tests travel with the code
+- **Rule 3:** Never commit broken tests
+- **Rule 4:** Evidence is not optional
+- **Rule 5:** Commit SHAs are the audit trail
 
-After all tasks complete, display a build summary:
+After all tasks, display:
 
 ```
 ## Build Summary
 
-**Spec:** {spec_id}
-**Run:** {run_id}
-
 | Task | Commit | Files Changed | Tests |
 |------|--------|---------------|-------|
-| task-01: {title} | {sha} | {files} | ✅ / ❌ |
-| task-02: {title} | {sha} | {files} | ✅ / ❌ |
+| task-01: {title} | {sha} | {files} | pass/fail |
 
-All tests passing: ✅ / ❌
+All tests passing: yes/no
+Total files changed: {list}
+Commit SHAs: {list}
 ```
 
-### Step 6: Verify and ship (via orchestrator)
+### Step 8: Gate — review the build
 
-After build is complete, call `mcp__agentcouncil__autopilot_start` with the `run_id`.
+Call `mcp__agentcouncil__review_loop`:
+- **artifact**: A summary of all code changes. Include: the diff summary, per-task evidence (files_changed, test_results, verification_notes), and the list of commit SHAs.
+- **artifact_type**: `"code"`
+- **review_objective**: `"Review the implementation for correctness, quality, and spec compliance"`
+- **focus_areas**: `["correctness", "test coverage", "spec compliance", "code quality", "security"]`
 
-The verify and ship stages run through the orchestrator pipeline with real runners and gate logic. These stages consume the `BuildArtifact` evidence you produced and run the acceptance probes you defined in the plan. You do not need to implement them manually.
+**Handle the gate decision:**
+- **`pass`** → proceed to Step 9
+- **`revise`** → read findings, fix the issues (follow the increment cycle for fixes), re-run this gate (max 2 revisions)
+- **`escalate`** → display findings, stop, ask user
 
-Display the final run status returned by the orchestrator.
+### Step 9: Verify
+
+Run the acceptance probes you defined in the plan. For each probe:
+- Execute the `command_hint` if specified
+- Check the `expected_observation`
+- Record pass/fail with evidence
+
+Display:
+
+```
+## Verification
+
+| Probe | Criterion | Level | Status | Evidence |
+|-------|-----------|-------|--------|----------|
+| probe-01 | ac-0: ... | unit | pass/fail | ... |
+
+Overall: passed/failed
+```
+
+If any probes fail with `retry_recommendation = retry_build`, go back to Step 7 with revision guidance (max 2 retries).
+
+### Step 10: Gate — challenge (conditional)
+
+**Only run this gate if tier >= 3 OR target_files touch sensitive paths (auth/, migrations/, infra/, deploy/, permissions/).**
+
+If the challenge gate should fire, call `mcp__agentcouncil__challenge`:
+- **artifact**: The verification results + build evidence + spec
+- **assumptions**: List of assumptions from the spec and plan
+- **success_criteria**: The acceptance criteria from the spec
+- **rounds**: 2
+
+**Handle the gate decision from `artifact.readiness`:**
+- **`ready`** → proceed to Step 11
+- **`needs_hardening`** → read `failure_modes` where `disposition == "must_harden"`, fix the issues, re-run verify (Step 9), then re-run this gate
+- **`not_ready`** → display failure modes, stop, ask user
+
+If challenge is skipped (tier < 3, no sensitive paths), proceed directly to Step 11.
+
+### Step 11: Ship
+
+Display the final delivery summary:
+
+```
+## Autopilot Complete
+
+**Run:** {run_id}
+**Spec:** {spec_id}
+**Tier:** {tier}
+
+**Gates passed:**
+- Spec review: {pass/revise count}
+- Plan review: {pass/revise count}
+- Build review: {pass/revise count}
+- Challenge: {passed/skipped}
+
+**Delivered:**
+- {count} tasks completed
+- {count} acceptance criteria verified
+- {count} commits: {sha list}
+
+**Files changed:**
+- {file list}
+```
+
+## Gate Protocol
+
+Every gate follows the same pattern:
+
+1. **Call the protocol** — `review_loop` for spec/plan/build, `challenge` for post-verify
+2. **Read the verdict** — `final_verdict` for review_loop, `readiness` for challenge
+3. **Act on it:**
+   - **advance** (pass/ready) → continue to next step
+   - **revise** (revise/needs_hardening) → fix issues, re-run the gate (max 2 revisions per gate)
+   - **block** (escalate/not_ready) → stop, display findings, ask the user
+
+If a gate revision loop exceeds 2 iterations, stop and ask the user — do not loop forever.
 
 ## Rules
 
-- Always show the spec before starting — let the user confirm before calling `autopilot_prepare`
-- Always show the plan before building — let the user confirm the task breakdown before starting build
-- Follow the workflow recipes — they are proven engineering patterns
-- The plan is your contract — do not silently expand scope
+- Always show the spec before calling `autopilot_prepare` — let the user confirm
+- Always show the plan before building — let the user confirm after the plan gate passes
+- Follow the workflow recipes — read `plan/workflow.md` and `build/workflow.md`
+- The plan is your contract — do not silently expand scope during build
 - Evidence is mandatory — every task needs `files_changed`, `test_results`, `verification_notes`
-- Verify every acceptance criterion — do not claim done without evidence
-- If the spec is wrong, tell the user before planning — do not build the wrong thing
-
-## Verify and Ship
-
-After build, `autopilot_start` runs the verify and ship stages through the orchestrator with real runners and gate logic. Verify consumes the `BuildArtifact` evidence and runs the acceptance probes defined in the plan. Ship packages the verified output for release. These stages are fully automated — Claude does not implement them manually.
+- Gates are not optional — every stage transition goes through independent review
+- On `revise`, fix the specific findings — do not start over from scratch
+- On `escalate`/`not_ready`, stop and involve the user — do not override the gate
+- If the spec is wrong, say so before planning — do not build the wrong thing
