@@ -57,7 +57,7 @@ Construct a review request that tells the reviewer:
 - What question to answer (completeness? feasibility? security? correctness?)
 - Focus areas and key concerns
 
-If `workspace_access` is `"native"`: include file paths in the prompt — the outside agent can read them directly. Do NOT dump file contents.
+If `workspace_access` is `"native"`: include file paths in the prompt — the outside agent can read them directly. Do NOT dump file contents. Add this hint at the end of the review request: "If you have access to code navigation tools (e.g. serena, codegraph), use them to trace dependencies, callers, and related code before reviewing."
 
 If `workspace_access` is `"assisted"` or `"none"`: read the relevant files yourself and include their contents in the prompt — the outside agent cannot access the workspace.
 

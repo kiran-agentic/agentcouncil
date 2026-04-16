@@ -64,11 +64,13 @@ class ClaudeProvider(OutsideProvider):
         model: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
         session_id: str | None = None,
+        cwd: str | None = None,
     ) -> None:
         self._model = model
         self._timeout = timeout
         self._session_id = session_id or str(uuid.uuid4())
         self._first_call = True  # First call uses --session-id, subsequent use --resume
+        self._cwd = cwd
 
     async def auth_check(self) -> None:
         """Verify claude CLI is on PATH."""
@@ -115,6 +117,7 @@ class ClaudeProvider(OutsideProvider):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self._cwd,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=last_msg.encode()),

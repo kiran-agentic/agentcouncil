@@ -166,7 +166,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.claude import ClaudeProvider
-            return ClaudeProvider(model=model)
+            return ClaudeProvider(model=model, cwd=workspace or _get_workspace_sync())
         raise ValueError(
             f"Session API requires a named profile with provider=ollama/openrouter/bedrock/codex/claude. "
             f"Got legacy backend: {resolved!r}"
@@ -219,6 +219,7 @@ def _make_provider(
         from agentcouncil.providers.claude import ClaudeProvider
         return ClaudeProvider(
             model=model or bp.model,
+            cwd=workspace or _get_workspace_sync(),
         )
     else:
         raise ProviderError(f"Unknown provider: {bp.provider!r}")

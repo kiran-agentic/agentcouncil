@@ -41,7 +41,7 @@ Write a neutral brief containing ONLY:
 **CRITICAL:** Do NOT include any proposal, opinion, or direction. The brief must be clean.
 
 For prompt construction:
-- If `workspace_access` is `"native"`: include file paths in the brief for the outside agent to read.
+- If `workspace_access` is `"native"`: include file paths in the brief for the outside agent to read. Add this hint at the end of the brief: "If you have access to code navigation tools (e.g. serena, codegraph), use them to understand the codebase structure before forming your proposal."
 - If `workspace_access` is `"assisted"` or `"none"`: read the relevant files yourself and include their contents in the brief.
 
 Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text, `profile` set to the backend argument (or omit `profile` for default), and `await_response` set to `false`. This fires the brief to the outside agent and returns immediately with `session_id` and `status: "pending"`. The outside agent is now working on its proposal in the background.

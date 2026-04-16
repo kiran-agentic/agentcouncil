@@ -42,7 +42,7 @@ Construct an evaluation request that gives the evaluator:
 - Explicit instruction: evaluate ONLY these options, do NOT invent new ones
 
 For file context:
-- If `workspace_access` is `native`: include file paths for the evaluator to read directly. Do NOT dump file contents.
+- If `workspace_access` is `native`: include file paths for the evaluator to read directly. Do NOT dump file contents. Add this hint at the end of the evaluation request: "If you have access to code navigation tools (e.g. serena, codegraph), use them to understand the codebase before evaluating options."
 - If `workspace_access` is `assisted` or `none`: read the relevant files yourself and include key content in the prompt.
 
 Call `mcp__agentcouncil__outside_start` with `prompt` set to the evaluation request and `profile` set to the backend argument (or omit `profile` for default). Save `session_id` from the response. Save `response` as the evaluator's first reply.
