@@ -793,8 +793,24 @@ class TestMCPTools:
         assert len(status["stages"]) == 5
 
     def test_start_completes_run(self, tmp_path, monkeypatch):
-        """autopilot_start runs pipeline to completion with stubs."""
+        """autopilot_start runs pipeline to completion with real runners."""
         monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        # Mock subprocess.run to prevent real command execution (verify/build
+        # stages would otherwise run `python3 -m pytest` which re-enters the
+        # test suite and causes infinite recursion).
+        import subprocess
+        _orig_run = subprocess.run
+
+        def _mock_subprocess_run(cmd, **kwargs):
+            # Allow git commands (used by build/ship), block test commands
+            if isinstance(cmd, list) and cmd[0] == "git":
+                return _orig_run(cmd, **kwargs)
+            # Return success for all other commands (test runners)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="mock: passed", stderr=""
+            )
+
+        monkeypatch.setattr("subprocess.run", _mock_subprocess_run)
         from agentcouncil.server import autopilot_prepare_tool, autopilot_start_tool
         prep = autopilot_prepare_tool(
             intent="test", spec_id="s1", title="T", objective="O",

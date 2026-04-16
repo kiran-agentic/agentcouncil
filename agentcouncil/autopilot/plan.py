@@ -216,8 +216,10 @@ def _build_acceptance_probes(
         else:
             mock_policy = "forbidden"
 
-        # Command hint from research
-        command_hint = research.test_commands[0] if research.test_commands else None
+        # Command hint: leave None so verify stage uses its own test discovery.
+        # Setting the full test suite command here would cause verify to run
+        # the entire suite once per criterion (N times instead of once).
+        command_hint = None
 
         # Related tasks: find tasks whose acceptance_criteria mention this criterion
         related_task_ids: list[str] = []
