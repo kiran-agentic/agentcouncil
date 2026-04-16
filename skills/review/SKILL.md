@@ -19,7 +19,11 @@ Parse the arguments for convergence mode. Use **iterative convergence** (review_
 
 Otherwise, use **one-shot review** (the default protocol below).
 
-**If convergence mode is detected:** Call the `mcp__agentcouncil__review_loop` MCP tool with the artifact content, artifact_type, and max_iterations (default 3). Present the ConvergenceResult showing iteration history, finding statuses, exit reason, and final verdict. Skip the one-shot protocol steps below.
+**If convergence mode is detected:** First check backend capabilities (Step 0 below). Then call the `mcp__agentcouncil__review_loop` MCP tool with artifact_type, max_iterations (default 3), and:
+- If `workspace_access` is `"native"`: pass `file_paths` (list of absolute paths to review) and set `artifact` to a brief description of what's being reviewed. The agents will read files directly.
+- If `workspace_access` is `"assisted"` or `"none"`: read the files yourself and pass their contents as `artifact`.
+
+Present the ConvergenceResult showing iteration history, finding statuses, exit reason, and final verdict. Skip the one-shot protocol steps below (except Step 0).
 
 ## Backend Selection
 

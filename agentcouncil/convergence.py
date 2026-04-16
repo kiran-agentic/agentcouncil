@@ -74,12 +74,25 @@ def _build_rereview_prompt(
     original_artifact: str,
     prior_findings: list[Finding],
     addressed_changes: str,
+    file_paths: list[str] | None = None,
+    workspace_access: str = "none",
 ) -> str:
-    """CL-05: Build scoped re-review prompt with prior findings + change summary."""
+    """CL-05: Build scoped re-review prompt with prior findings + change summary.
+
+    When workspace_access is "native" and file_paths are provided, references
+    file paths instead of embedding the original artifact content.
+    """
     findings_text = "\n".join(
         f"- [{f.id}] {f.title} (severity: {f.severity}): {f.description}"
         for f in prior_findings
     )
+
+    if workspace_access == "native" and file_paths:
+        file_list = "\n".join(f"- {p}" for p in file_paths)
+        artifact_section = f"## Original Artifact Files\nRe-read these files for the current state:\n{file_list}"
+    else:
+        artifact_section = f"## Original Artifact\n{original_artifact}"
+
     return f"""\
 You are re-reviewing an artifact after the lead agent addressed your prior findings.
 Focus on: (1) whether prior findings are resolved, (2) regressions from fixes.
@@ -91,8 +104,7 @@ Do NOT re-review the entire artifact from scratch.
 ## Changes Made by Lead
 {addressed_changes}
 
-## Original Artifact
-{original_artifact}
+{artifact_section}
 
 Respond with JSON containing:
 - "findings": array of objects with finding_id, status (verified/reopened/open), reviewer_notes
@@ -169,11 +181,14 @@ async def review_loop(
     max_iterations: int = 3,
     on_event: Optional[Any] = None,
     outside_meta: Optional[TranscriptMeta] = None,
+    file_paths: Optional[list[str]] = None,
+    workspace_access: str = "none",
 ) -> ConvergenceResult:
     """Run an iterative review convergence loop (CL-01, CL-02).
 
     Args:
-        artifact: Text content to review.
+        artifact: Text content to review (used as fallback when workspace_access
+            is not "native" or file_paths is empty).
         artifact_type: Type of artifact (code, design, plan, etc.).
         outside_adapter: AgentAdapter for the outside reviewer.
         lead_adapter: AgentAdapter for the lead agent.
@@ -182,6 +197,8 @@ async def review_loop(
         max_iterations: Maximum review iterations (default 3, CL-12 hard cap 10).
         on_event: Optional event callback.
         outside_meta: Optional provenance metadata.
+        file_paths: File paths for agents with native workspace access to read directly.
+        workspace_access: Backend workspace capability ("native", "assisted", "none").
 
     Returns:
         ConvergenceResult with iteration history, final findings, and exit reason.
@@ -200,11 +217,13 @@ async def review_loop(
         review_objective=review_objective,
         focus_areas=focus_areas or [],
         rounds=1,
+        file_paths=file_paths or [],
     )
 
     review_result = await review(
         review_input, outside_adapter, lead_adapter,
         on_event=on_event, outside_meta=outside_meta,
+        workspace_access=workspace_access,
     )
 
     # Extract findings from initial review
@@ -262,6 +281,8 @@ async def review_loop(
         # CL-05: Scoped re-review
         rereview_prompt = _build_rereview_prompt(
             artifact, open_findings, addressed_changes,
+            file_paths=file_paths,
+            workspace_access=workspace_access,
         )
         try:
             rereview_response = await outside_adapter.acall(rereview_prompt)

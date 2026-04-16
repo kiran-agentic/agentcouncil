@@ -1053,19 +1053,24 @@ async def review_loop_tool(
     focus_areas: list[str] | None = None,
     max_iterations: int = 3,
     backend: str | None = None,
+    file_paths: list[str] | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
 
     Reviews the artifact, tracks findings, and loops through fix/re-review
     cycles until all findings are verified or max iterations reached.
 
+    When file_paths is provided and the backend has native workspace access,
+    agents read the files directly instead of receiving embedded content.
+
     Args:
-        artifact: Text content to review.
+        artifact: Text content to review (fallback when backend lacks workspace access).
         artifact_type: Type (code, design, plan, document, other).
         review_objective: Optional review focus.
         focus_areas: Optional specific areas.
         max_iterations: Maximum iterations (default 3, hard cap 10).
         backend: Backend profile for the outside reviewer.
+        file_paths: File paths for native-access backends to read directly.
     """
     import time as _time
 
@@ -1075,6 +1080,7 @@ async def review_loop_tool(
 
     try:
         provider = _make_provider(profile=backend)
+        ws_access = provider.workspace_access
         runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
         session = OutsideSession(provider, runtime, profile=backend)
         await session.open()
@@ -1088,6 +1094,8 @@ async def review_loop_tool(
                 review_objective=review_objective,
                 focus_areas=focus_areas,
                 max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access=ws_access,
             )
         finally:
             await provider.close()
@@ -1102,6 +1110,8 @@ async def review_loop_tool(
             review_objective=review_objective,
             focus_areas=focus_areas,
             max_iterations=max_iterations,
+            file_paths=file_paths,
+            workspace_access="none",  # fallback path — unknown capability
         )
 
     return result.model_dump()

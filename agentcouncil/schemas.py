@@ -145,6 +145,7 @@ class ReviewInput(BaseModel):
     review_objective: Optional[str] = None
     focus_areas: list[str] = Field(default_factory=list)
     rounds: int = 1
+    file_paths: list[str] = Field(default_factory=list)  # when set + workspace_access=native, agents read files directly
 
 
 class Finding(BaseModel):

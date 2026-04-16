@@ -44,9 +44,33 @@ Produce an independent review. For each finding, state:
 
 Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
 
+REVIEW_INPUT_PROMPT_PATHS = """\
+You are reviewing an artifact. Read the files listed below, then analyze independently and produce your findings.
 
-def _build_input_prompt(ri: ReviewInput) -> str:
-    """Build the factual input prompt from ReviewInput (REV-10: no opinion)."""
+## Artifact ({artifact_type})
+
+Read these files:
+{file_list}
+
+{objective_section}
+{focus_section}
+
+Produce an independent review. For each finding, state:
+- What the issue is
+- Its severity (critical/high/medium/low)
+- Its impact on the system
+- Evidence from the artifact (reference file paths and line numbers)
+- Your confidence level (high/medium/low)
+
+Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
+
+
+def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
+    """Build the factual input prompt from ReviewInput (REV-10: no opinion).
+
+    When workspace_access is "native" and file_paths are provided, builds a
+    path-reference prompt instead of embedding artifact content.
+    """
     objective_section = ""
     if ri.review_objective:
         objective_section = f"## Review Objective\n{ri.review_objective}"
@@ -55,6 +79,15 @@ def _build_input_prompt(ri: ReviewInput) -> str:
     if ri.focus_areas:
         items = "\n".join(f"- {area}" for area in ri.focus_areas)
         focus_section = f"## Focus Areas\n{items}"
+
+    if workspace_access == "native" and ri.file_paths:
+        file_list = "\n".join(f"- {p}" for p in ri.file_paths)
+        return REVIEW_INPUT_PROMPT_PATHS.format(
+            artifact_type=ri.artifact_type,
+            file_list=file_list,
+            objective_section=objective_section,
+            focus_section=focus_section,
+        )
 
     return REVIEW_INPUT_PROMPT.format(
         artifact_type=ri.artifact_type,
@@ -131,6 +164,7 @@ async def review(
     on_event: Optional[OnEvent] = None,
     outside_meta: Optional[TranscriptMeta] = None,
     checkpoint_callback: Optional[OnEvent] = None,
+    workspace_access: str = "none",
 ) -> DeliberationResult:
     """Run the review deliberation protocol.
 
@@ -139,20 +173,25 @@ async def review(
         outside_adapter: AgentAdapter for the independent outside reviewer.
         lead_adapter: AgentAdapter for the lead reviewer.
         on_event: Optional event callback for progress tracking.
+        workspace_access: Backend workspace capability ("native", "assisted", "none").
+            When "native" and file_paths are set, prompts reference paths instead of
+            embedding content.
 
     Returns:
         DeliberationResult[ReviewArtifact] with verdict, findings, strengths,
         open_questions, next_action.
 
     Raises:
-        ValueError: If review_input.artifact is empty.
+        ValueError: If review_input.artifact is empty and no file_paths provided.
     """
     # Validate input before any adapter calls
-    if not review_input.artifact or not review_input.artifact.strip():
-        raise ValueError("artifact must not be empty")
+    has_content = review_input.artifact and review_input.artifact.strip()
+    has_paths = bool(review_input.file_paths)
+    if not has_content and not has_paths:
+        raise ValueError("artifact must not be empty (or provide file_paths)")
 
     # Build factual input prompt (REV-10: no opinion)
-    input_prompt = _build_input_prompt(review_input)
+    input_prompt = _build_input_prompt(review_input, workspace_access=workspace_access)
 
     # Run dual-independent deliberation with ReviewArtifact
     return await run_deliberation(
