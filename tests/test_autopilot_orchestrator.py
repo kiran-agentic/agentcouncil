@@ -823,6 +823,20 @@ class TestMCPTools:
     def test_resume_tool_returns_state(self, tmp_path, monkeypatch):
         """autopilot_resume continues a paused run."""
         monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        # Mock subprocess.run to prevent real command execution (verify/build
+        # stages would otherwise run `python3 -m pytest` which re-enters the
+        # test suite and causes infinite recursion).
+        import subprocess
+        _orig_run = subprocess.run
+
+        def _mock_subprocess_run(cmd, **kwargs):
+            if isinstance(cmd, list) and cmd[0] == "git":
+                return _orig_run(cmd, **kwargs)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="mock: passed", stderr=""
+            )
+
+        monkeypatch.setattr("subprocess.run", _mock_subprocess_run)
         # Create a run, manually set to paused_for_approval
         import time as _time
         run = AutopilotRun(
