@@ -1,13 +1,13 @@
 ---
 name: autopilot
-description: Run the AgentCouncil autopilot pipeline. Sequences work through spec_prep → plan → build → verify → ship with typed artifacts, gate transitions, and persistent state. Use when you want to automate a multi-stage development workflow with verification gates.
+description: Run the AgentCouncil autopilot pipeline. Validates a spec, classifies tier, then YOU (Claude) implement the work using the spec as your contract. Use when you want structured spec validation and tier classification before implementing a feature.
 allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume
 argument-hint: [what to build — describe the feature, fix, or change]
 ---
 
 # AgentCouncil Autopilot
 
-You are running the AgentCouncil autopilot pipeline. This sequences work through five stages with typed artifacts and gate transitions.
+You are running the AgentCouncil autopilot workflow. The pipeline validates your spec and classifies the work tier. Then YOU implement the work — the pipeline's plan/build stages are stubs in v2.0 and cannot write code.
 
 **Intent:** $ARGUMENTS
 
@@ -15,25 +15,25 @@ You are running the AgentCouncil autopilot pipeline. This sequences work through
 
 ### Step 1: Understand the intent
 
-Read the user's intent. If it's vague, ask 1-2 clarifying questions before proceeding. You need enough to build a spec:
+Read the user's intent. If it's vague, ask 1-2 clarifying questions. You need enough to build a spec:
 - What is being built/changed?
 - What files are likely affected?
 - What does "done" look like?
 
-If the intent is already clear and specific, skip questions and proceed.
+If the intent is already clear, proceed.
 
 ### Step 2: Build the spec
 
-From the intent and any clarification, construct:
-- **spec_id**: A short kebab-case identifier (e.g., `add-backtester`, `fix-auth-timeout`)
+From the intent, construct:
+- **spec_id**: Short kebab-case identifier (e.g., `add-backtester`, `fix-auth-timeout`)
 - **title**: One-line title
-- **objective**: 1-2 sentence description of what this delivers
+- **objective**: 1-2 sentence description
 - **requirements**: List of specific things that must be built/changed
-- **acceptance_criteria**: List of verifiable conditions that prove it's done (e.g., "tests pass", "endpoint returns 200", "file contains X")
-- **target_files**: List of files likely to be created or modified (used for tier classification — paths containing `auth/`, `migrations/`, `infra/`, `deploy/`, or `permissions/` trigger tier 3)
-- **tier**: 1 (low-risk), 2 (standard, default), or 3 (sensitive) — auto-classified from target_files but can be overridden
+- **acceptance_criteria**: List of verifiable conditions (e.g., "tests pass", "file contains X")
+- **target_files**: Files likely created or modified (paths with `auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/` trigger tier 3)
+- **tier**: 1 (low-risk), 2 (standard, default), or 3 (sensitive)
 
-Display the spec to the user:
+Display the spec:
 
 ```
 ## Autopilot Spec
@@ -53,80 +53,83 @@ Display the spec to the user:
 - {each file}
 ```
 
-Ask: "Start the autopilot pipeline with this spec?"
+Ask: "Start with this spec?"
 
-### Step 3: Prepare the run
+### Step 3: Validate and register the run
 
 Call `mcp__agentcouncil__autopilot_prepare` with all spec fields.
 
-Save the returned `run_id`.
+This validates the spec (Pydantic model checks), classifies the tier from target_files, and persists the run. Save the returned `run_id`.
 
 Display:
 ```
-Run created: {run_id}
-Tier: {tier} ({tier_reason if available})
-Starting pipeline...
+Spec validated. Run: {run_id}
+Tier: {tier} ({reason})
+
+Now implementing...
 ```
 
-### Step 4: Execute the pipeline
+### Step 4: Implement the work yourself
 
-Call `mcp__agentcouncil__autopilot_start` with the `run_id`.
+**You are the builder.** Use the spec as your contract:
+- Read existing code to understand the codebase
+- Implement each requirement from the spec
+- Create/modify the target files
+- Follow project conventions (read CLAUDE.md if it exists)
+- Commit each logical change atomically
 
-The pipeline sequences: `spec_prep → plan → build → verify → ship`
+Work through the requirements one by one. After each, check it against the acceptance criteria.
 
-Display the result:
-- If `status=completed`: Show the stage summary and congratulate
-- If `status=paused_for_approval`: Show which stage needs approval and what's blocking
-- If `status=paused_for_revision`: Show what needs revision
-- If `status=failed`: Show the failure_reason and suggest next steps
+### Step 5: Verify against acceptance criteria
 
-### Step 5: Handle paused runs
+After implementation, verify EVERY acceptance criterion from the spec:
+- Run tests if applicable
+- Check files exist with expected content
+- Verify imports work
+- Run any commands specified in the criteria
 
-If the run paused (approval or revision needed):
+Display results:
+```
+## Verification
 
-1. Show the user what's blocking:
-   ```
-   ## Pipeline Paused
+| Criterion | Status |
+|-----------|--------|
+| {criterion 1} | ✅ / ❌ |
+| {criterion 2} | ✅ / ❌ |
+```
 
-   **Status:** {status}
-   **Stage:** {current_stage}
-   **Reason:** {failure_reason or "Approval required for this stage"}
+If any fail, fix them before proceeding.
 
-   **Stages:**
-   {for each stage: name — status (gate_decision if any)}
-   ```
+### Step 6: Update run status
 
-2. Ask: "Resume the pipeline?" or "Check status first?"
+Call `mcp__agentcouncil__autopilot_status` with the `run_id` to confirm the run is tracked.
 
-3. If resume: Call `mcp__agentcouncil__autopilot_resume` with the `run_id`
-4. If status: Call `mcp__agentcouncil__autopilot_status` with the `run_id`, display, then ask again
-
-Repeat until the run reaches `completed` or `failed`.
-
-### Step 6: Present final result
-
+Display:
 ```
 ## Autopilot Complete
 
 **Run:** {run_id}
-**Status:** {status}
-**Stages:**
-{for each stage: emoji name — status}
+**Spec:** {spec_id}
+**Tier:** {tier}
 
-{If completed: "Pipeline finished successfully."}
-{If failed: "Pipeline failed at {current_stage}: {failure_reason}"}
+**Implemented:**
+- {summary of what was built}
+
+**Verified:**
+- {count} acceptance criteria passed
 ```
 
 ## Rules
 
 - Always show the spec before starting — let the user confirm
-- Never skip the prepare step — it validates the spec and classifies tier
-- If the pipeline fails, explain why clearly — don't just show raw error
-- For paused runs, always show what's blocking before asking to resume
-- The pipeline runs locally — state is persisted to `~/.agentcouncil/autopilot/`
+- The pipeline validates the spec and classifies tier — that's its job in v2.0
+- YOU do the actual implementation — plan/build stages are stubs
+- Verify every acceptance criterion — don't claim done without evidence
+- Commit changes atomically as you go
+- If the spec is wrong, tell the user before implementing — don't build the wrong thing
 
-## Current Limitations
+## Why Not Run the Full Pipeline?
 
-- `plan` and `build` stages use stub runners — they produce minimal artifacts
-- Gates use stub protocol artifacts, not live backend deliberation sessions
-- `spec_prep`, `verify`, and `ship` have real runners with actual execution
+The `autopilot_start` tool runs all 5 stages, but `plan` and `build` produce stub artifacts — they don't write code. Running the full pipeline gives a false "completed" status without any real work done. In v2.0, use `autopilot_prepare` for spec validation + tier classification, then implement directly.
+
+When real plan/build runners ship in a future version, this skill will switch to running the full pipeline.
