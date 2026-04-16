@@ -15,7 +15,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 
 from agentcouncil.adapters import (
     ClaudeAdapter,
@@ -62,6 +62,61 @@ _SESSIONS: dict[str, OutsideSession] = {}
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
 _PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Task
 
+# ---------------------------------------------------------------------------
+# Workspace resolution — prefer MCP roots over Path.cwd().
+# The MCP server runs from the plugin cache directory, not the user's project.
+# MCP roots tell us the actual project directory the client is working in.
+# ---------------------------------------------------------------------------
+
+_resolved_workspace: str | None = None
+
+
+async def _resolve_workspace(ctx=None) -> str:
+    """Resolve the project workspace directory from MCP roots.
+
+    Called once from the first tool invocation with a Context. Caches the
+    result globally so all subsequent calls (including sync) use it.
+
+    Priority:
+    1. Cached result from a previous call
+    2. MCP roots from the client (first file:// root URI)
+    3. AGENTCOUNCIL_CWD env var
+    4. Path.cwd() fallback (for tests and non-MCP contexts)
+    """
+    global _resolved_workspace
+    if _resolved_workspace is not None:
+        return _resolved_workspace
+
+    # Try MCP roots from client context
+    if ctx is not None:
+        try:
+            roots = await ctx.list_roots()
+            if roots:
+                uri = str(roots[0].uri)
+                if uri.startswith("file://"):
+                    _resolved_workspace = uri.removeprefix("file://")
+                    log.info("Workspace resolved from MCP roots: %s", _resolved_workspace)
+                    return _resolved_workspace
+        except Exception:
+            pass  # Client may not support roots
+
+    # Env var fallback
+    env_cwd = os.environ.get("AGENTCOUNCIL_CWD")
+    if env_cwd:
+        _resolved_workspace = env_cwd
+        log.info("Workspace resolved from AGENTCOUNCIL_CWD: %s", _resolved_workspace)
+        return _resolved_workspace
+
+    # Last resort
+    _resolved_workspace = str(Path.cwd())
+    log.info("Workspace using Path.cwd() fallback: %s", _resolved_workspace)
+    return _resolved_workspace
+
+
+def _get_workspace_sync() -> str:
+    """Return cached workspace or CWD. Used by _make_provider and OutsideRuntime."""
+    return _resolved_workspace or str(Path.cwd())
+
 
 # ---------------------------------------------------------------------------
 # Provider factory
@@ -71,6 +126,7 @@ _PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Tas
 def _make_provider(
     profile: str | None = None,
     model: str | None = None,
+    workspace: str | None = None,
 ) -> OutsideProvider:
     """Resolve a named profile and instantiate the appropriate provider.
 
@@ -101,7 +157,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.codex import CodexProvider
-            return CodexProvider(model=model, cwd=str(Path.cwd()))
+            return CodexProvider(model=model, cwd=workspace or _get_workspace_sync())
         elif resolved == "claude":
             if shutil.which("claude") is None:
                 raise ProviderError(
@@ -139,7 +195,7 @@ def _make_provider(
         from agentcouncil.providers.kiro import KiroProvider
         return KiroProvider(
             cli_path=bp.cli_path,
-            workspace=str(Path.cwd()),
+            workspace=workspace or _get_workspace_sync(),
         )
     elif bp.provider == "codex":
         if shutil.which("codex") is None:
@@ -151,7 +207,7 @@ def _make_provider(
         from agentcouncil.providers.codex import CodexProvider
         return CodexProvider(
             model=model or bp.model,
-            cwd=str(Path.cwd()),
+            cwd=workspace or _get_workspace_sync(),
         )
     elif bp.provider == "claude":
         if shutil.which("claude") is None:
@@ -190,6 +246,7 @@ async def outside_start_tool(
     profile: str | None = None,
     model: str | None = None,
     await_response: bool = True,
+    ctx: Context | None = None,
 ) -> dict:
     """Start a multi-turn session with an outside LLM backend.
 
@@ -211,13 +268,15 @@ async def outside_start_tool(
         - "response" (str) when await_response=True
         - "status": "pending" when await_response=False
     """
-    provider = _make_provider(profile, model)
+    # Resolve workspace from MCP roots on first call
+    workspace = await _resolve_workspace(ctx)
+    provider = _make_provider(profile, model, workspace=workspace)
 
     # Resolve the BackendProfile to get provider_name for session metadata
     resolved = ProfileLoader().resolve(profile_name=profile)
     provider_name = resolved.provider if isinstance(resolved, BackendProfile) else resolved
 
-    runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+    runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
     session = OutsideSession(
         provider,
         runtime,
@@ -422,6 +481,7 @@ async def brainstorm_tool(
     backend: str | None = None,
     outside_agent: str | None = None,
     backends: list[str] | None = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Run the AgentCouncil deliberation protocol and return a consensus artifact.
 
@@ -458,6 +518,7 @@ async def brainstorm_tool(
     import time as _time
     _t0 = _time.time()
 
+    await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     effective_backend = backend or outside_agent
     lead = ClaudeAdapter(model="opus", timeout=300)
 
@@ -479,7 +540,7 @@ async def brainstorm_tool(
         try:
             for bk in backends:
                 provider = _make_provider(profile=bk)
-                runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+                runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
                 session = OutsideSession(provider, runtime, profile=bk)
                 await session.open()
                 outside_adapters.append(OutsideSessionAdapter(session))
@@ -527,7 +588,7 @@ async def brainstorm_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -680,7 +741,7 @@ async def review_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -773,7 +834,7 @@ async def decide_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -876,7 +937,7 @@ async def challenge_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -945,7 +1006,7 @@ async def outside_query_tool(
         provider = _make_provider(profile=outside_agent)
         resolved = ProfileLoader().resolve(profile_name=outside_agent)
         provider_name = resolved.provider if isinstance(resolved, BackendProfile) else resolved
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(
             provider, runtime,
             profile=outside_agent, model=None, provider_name=provider_name,
@@ -1094,7 +1155,7 @@ async def protocol_resume_tool(
 
     try:
         provider = _make_provider(profile=profile, model=model)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=profile, model=model)
         await session.open()
         try:
@@ -1120,6 +1181,7 @@ async def review_loop_tool(
     max_iterations: int = 3,
     backend: str | None = None,
     file_paths: list[str] | None = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
 
@@ -1140,6 +1202,7 @@ async def review_loop_tool(
     """
     import time as _time
 
+    await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     from agentcouncil.convergence import review_loop
 
     lead = ClaudeAdapter(model="opus", timeout=300)
@@ -1147,7 +1210,7 @@ async def review_loop_tool(
     try:
         provider = _make_provider(profile=backend)
         ws_access = provider.workspace_access
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=backend)
         await session.open()
         try:

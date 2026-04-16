@@ -38,7 +38,7 @@ From the intent, construct:
 - **target_files**: Files likely created or modified (paths with `auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/` trigger tier 3)
 - **tier**: 1 (low-risk), 2 (standard, default), or 3 (sensitive)
 
-Display the spec and ask: "Start with this spec?"
+Display the spec, then proceed immediately to validation. Do not wait for user confirmation — autopilot is autonomous.
 
 ### Step 3: Validate and register the run
 
@@ -93,7 +93,9 @@ Display the plan:
 **Execution Order:** task-01, task-02, ...
 ```
 
-### Step 6: Gate — review the plan
+### Step 6: Gate — review the plan (MANDATORY)
+
+**DO NOT SKIP THIS STEP.** The plan must be independently reviewed before any code is written. This is a non-negotiable gate.
 
 Call `mcp__agentcouncil__review_loop`:
 - **artifact**: The full plan text (tasks, probes, execution order, verification strategy)
@@ -102,9 +104,11 @@ Call `mcp__agentcouncil__review_loop`:
 - **focus_areas**: `["task decomposition", "dependency ordering", "acceptance probe coverage", "scope creep"]`
 
 **Handle the gate decision:**
-- **`pass`** → ask user "Proceed with this plan?" and wait for confirmation, then go to Step 7
+- **`pass`** → proceed to Step 7 (do NOT ask the user for confirmation — autopilot is autonomous)
 - **`revise`** → read findings, revise the plan, display changes, re-run this gate (max 2 revisions)
 - **`escalate`** → display findings, stop, ask user
+
+**If the review_loop tool fails or is unavailable, STOP and tell the user. Do not proceed to build without a reviewed plan.**
 
 ### Step 7: Build (follow the build workflow recipe per task)
 
@@ -148,7 +152,9 @@ Total files changed: {list}
 Commit SHAs: {list}
 ```
 
-### Step 8: Gate — review the build
+### Step 8: Gate — review the build (MANDATORY)
+
+**DO NOT SKIP THIS STEP.** The build must be independently reviewed before verification. This is a non-negotiable gate.
 
 Call `mcp__agentcouncil__review_loop`:
 - **artifact**: A summary of all code changes. Include: the diff summary, per-task evidence (files_changed, test_results, verification_notes), and the list of commit SHAs.
@@ -160,6 +166,8 @@ Call `mcp__agentcouncil__review_loop`:
 - **`pass`** → proceed to Step 9
 - **`revise`** → read findings, fix the issues (follow the increment cycle for fixes), re-run this gate (max 2 revisions)
 - **`escalate`** → display findings, stop, ask user
+
+**If the review_loop tool fails or is unavailable, STOP and tell the user. Do not proceed to verify without a reviewed build.**
 
 ### Step 9: Verify
 
@@ -240,12 +248,12 @@ If a gate revision loop exceeds 2 iterations, stop and ask the user — do not l
 
 ## Rules
 
-- Always show the spec before calling `autopilot_prepare` — let the user confirm
-- Always show the plan before building — let the user confirm after the plan gate passes
+- Display the spec before calling `autopilot_prepare` — but do not wait for confirmation, proceed autonomously
+- Display the plan before building — but do not wait for confirmation after the plan gate passes, proceed autonomously
 - Follow the workflow recipes — read `plan/workflow.md` and `build/workflow.md`
 - The plan is your contract — do not silently expand scope during build
 - Evidence is mandatory — every task needs `files_changed`, `test_results`, `verification_notes`
-- Gates are not optional — every stage transition goes through independent review
+- **Gates are NEVER optional** — every stage transition goes through independent review. Skipping a gate is a protocol violation. If a gate tool is unavailable, STOP — do not proceed without review.
 - On `revise`, fix the specific findings — do not start over from scratch
 - On `escalate`/`not_ready`, stop and involve the user — do not override the gate
 - If the spec is wrong, say so before planning — do not build the wrong thing
