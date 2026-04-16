@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">AgentCouncil badge</title>
+  <desc id="desc">A dark badge version of the AgentCouncil logo for avatars and social previews.</desc>
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="#0B1120"/>
+  <path d="M383.221 130.165C350.602 97.003 305.226 76 256 76C157.693 76 78 155.693 78 254C78 352.307 157.693 432 256 432C311.145 432 360.431 406.919 393.11 367.572" stroke="#F7F4EA" stroke-width="44" stroke-linecap="round"/>
+  <path d="M156 362L221 174H265L200 362H156Z" fill="#38BFAF"/>
+  <path d="M356 362L291 174H247L312 362H356Z" fill="#F7B542"/>
+  <rect x="208" y="246" width="96" height="124" rx="34" fill="#F7F4EA"/>
+  <circle cx="256" cy="308" r="16" fill="#0B1120"/>
+</svg>

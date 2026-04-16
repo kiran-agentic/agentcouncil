@@ -1,0 +1,17 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">AgentCouncil logo lockup</title>
+  <desc id="desc">The AgentCouncil logo mark paired with the project wordmark and tagline.</desc>
+  <g transform="translate(26 26) scale(0.5234375)">
+    <path d="M383.221 130.165C350.602 97.003 305.226 76 256 76C157.693 76 78 155.693 78 254C78 352.307 157.693 432 256 432C311.145 432 360.431 406.919 393.11 367.572" stroke="#0F172A" stroke-width="44" stroke-linecap="round"/>
+    <path d="M156 362L221 174H265L200 362H156Z" fill="#1A9F93"/>
+    <path d="M356 362L291 174H247L312 362H356Z" fill="#F59E0B"/>
+    <rect x="208" y="246" width="96" height="124" rx="34" fill="#0F172A"/>
+    <circle cx="256" cy="308" r="16" fill="#F7F4EA"/>
+  </g>
+  <text x="334" y="138" fill="#0F172A" font-family="'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="88" font-weight="700" letter-spacing="-2">AgentCouncil</text>
+  <text x="338" y="192" fill="#475569" font-family="'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="30" font-weight="500" letter-spacing="0.6">Multi-agent deliberation protocols for AI coding assistants</text>
+  <path d="M338 230H528" stroke="#1A9F93" stroke-width="10" stroke-linecap="round"/>
+  <path d="M550 230H740" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M762 230H952" stroke="#F59E0B" stroke-width="10" stroke-linecap="round"/>
+  <text x="338" y="274" fill="#64748B" font-family="'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500" letter-spacing="1.1">INDEPENDENCE BEFORE CONVERGENCE</text>
+</svg>

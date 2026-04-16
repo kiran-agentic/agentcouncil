@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Concept 3: Council Chamber</title>
+  <desc id="desc">A literal council layout with six abstract agents around a shared decision chamber.</desc>
+  <rect width="512" height="512" rx="128" fill="#FAF7EF"/>
+  <path d="M256 154L338 202V310L256 358L174 310V202L256 154Z" fill="#0F172A"/>
+  <path d="M256 204L272.408 238.843L310 243.101L282.5 269.156L289.493 306.899L256 289L222.507 306.899L229.5 269.156L202 243.101L239.592 238.843L256 204Z" fill="#F8D26A"/>
+  <path d="M256 96C274.777 96 290 111.223 290 130C290 148.777 274.777 164 256 164C237.223 164 222 148.777 222 130C222 111.223 237.223 96 256 96Z" fill="#18A999"/>
+  <path d="M256 348C274.777 348 290 363.223 290 382C290 400.777 274.777 416 256 416C237.223 416 222 400.777 222 382C222 363.223 237.223 348 256 348Z" fill="#F59E0B"/>
+  <path d="M147.746 158C166.523 158 181.746 173.223 181.746 192C181.746 210.777 166.523 226 147.746 226C128.969 226 113.746 210.777 113.746 192C113.746 173.223 128.969 158 147.746 158Z" fill="#18A999"/>
+  <path d="M364.254 158C383.031 158 398.254 173.223 398.254 192C398.254 210.777 383.031 226 364.254 226C345.477 226 330.254 210.777 330.254 192C330.254 173.223 345.477 158 364.254 158Z" fill="#F59E0B"/>
+  <path d="M147.746 286C166.523 286 181.746 301.223 181.746 320C181.746 338.777 166.523 354 147.746 354C128.969 354 113.746 338.777 113.746 320C113.746 301.223 128.969 286 147.746 286Z" fill="#F59E0B"/>
+  <path d="M364.254 286C383.031 286 398.254 301.223 398.254 320C398.254 338.777 383.031 354 364.254 354C345.477 354 330.254 338.777 330.254 320C330.254 301.223 345.477 286 364.254 286Z" fill="#18A999"/>
+  <path d="M256 154V174" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M256 338V358" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M174 210L157 201" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M338 210L355 201" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M174 302L157 311" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M338 302L355 311" stroke="#0F172A" stroke-width="10" stroke-linecap="round"/>
+  <path d="M223 155C223 175.435 237.565 192 256 192C274.435 192 289 175.435 289 155" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M223 357C223 336.565 237.565 320 256 320C274.435 320 289 336.565 289 357" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M114 224C114 244.435 128.565 261 147 261C165.435 261 180 244.435 180 224" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M332 224C332 244.435 346.565 261 365 261C383.435 261 398 244.435 398 224" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M114 286C114 265.565 128.565 249 147 249C165.435 249 180 265.565 180 286" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M332 286C332 265.565 346.565 249 365 249C383.435 249 398 265.565 398 286" stroke="#0F172A" stroke-width="12" stroke-linecap="round"/>
+</svg>

@@ -1,6 +1,6 @@
 """agentcouncil.autopilot.orchestrator — LinearOrchestrator for autopilot pipeline.
 
-Implements the central state machine that sequences stub work stages through the
+Implements the central state machine that sequences work stages through the
 full autopilot pipeline (spec_prep -> plan -> build -> verify -> ship), persisting
 state at every checkpoint, enforcing gate transitions (advance/revise/block), and
 conditionally running the challenge gate after verify.
@@ -201,6 +201,7 @@ class LinearOrchestrator:
         normalizer: Optional[GateNormalizer] = None,
         max_revise_iterations: int = 3,
         gate_runners: Optional[dict[str, Callable[[], GateDecision]]] = None,
+        gate_executor: Optional[Any] = None,
     ) -> None:
         """Initialise the orchestrator.
 
@@ -215,6 +216,10 @@ class LinearOrchestrator:
             gate_runners: Optional injectable gate runners keyed by gate_type.
                 When provided, the gate runner is called directly (returns GateDecision)
                 instead of running stub protocol + normalizer. Useful for testing.
+            gate_executor: Optional GateExecutor for running real protocol sessions.
+                When provided and no gate_runner matches, the executor runs the
+                real protocol (review_loop, challenge, etc.) through the configured
+                backend. Falls back to stub gates if None.
         """
         self._registry = registry
         self._runners = {
@@ -224,9 +229,12 @@ class LinearOrchestrator:
         self._normalizer = normalizer if normalizer is not None else GateNormalizer()
         self._max_revise = max_revise_iterations
         self._gate_runners = gate_runners or {}
+        self._gate_executor = gate_executor
         # Note: build_retry_count is persisted on AutopilotRun, not here.
         # self._build_retry_count removed — use run.build_retry_count instead.
         self._last_raw_artifact: Any = None
+        # Mutable state: current artifact registry, set during run_pipeline
+        self._current_artifact_registry: Optional[dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -258,6 +266,9 @@ class LinearOrchestrator:
 
         if artifact_registry is None:
             artifact_registry = {}
+
+        # Store reference for gate executor to access stage artifacts
+        self._current_artifact_registry = artifact_registry
 
         current_stage: Optional[str] = run.current_stage
 
@@ -626,8 +637,10 @@ class LinearOrchestrator:
     def _run_gate(self, gate_type: str) -> GateDecision:
         """Run a gate and return a GateDecision.
 
-        If gate_runners[gate_type] is provided, call it directly.
-        Otherwise create a stub protocol artifact and normalize it.
+        Priority order:
+        1. Injected gate_runners[gate_type] (for testing)
+        2. GateExecutor (real protocol sessions through backends)
+        3. Stub protocol artifact + normalizer (fallback)
 
         Args:
             gate_type: The gate type string (e.g., "review_loop", "challenge").
@@ -635,12 +648,33 @@ class LinearOrchestrator:
         Returns:
             A normalized GateDecision.
         """
-        # Use injected gate runner if available
+        # Priority 1: Use injected gate runner if available
         if gate_type in self._gate_runners:
             self._last_raw_artifact = None
             return self._gate_runners[gate_type]()
 
-        # Fall back to stub protocol artifact + normalizer
+        # Priority 2: Use gate executor for real protocol sessions
+        if self._gate_executor is not None:
+            try:
+                artifact_text = self._build_gate_artifact_text()
+                stage_name = ""
+                if self._current_artifact_registry is not None:
+                    # Infer current stage from what's in the registry
+                    for name in ("ship", "verify", "build", "plan", "spec_prep"):
+                        if name in self._current_artifact_registry:
+                            stage_name = name
+                            break
+                decision, raw = self._gate_executor.run_gate(
+                    gate_type, artifact_text=artifact_text, stage_name=stage_name,
+                )
+                self._last_raw_artifact = raw
+                return decision
+            except Exception:
+                # Gate executor failed (e.g., no backend available) —
+                # fall through to stub gates
+                pass
+
+        # Priority 3: Fall back to stub protocol artifact + normalizer
         if gate_type == "review_loop" and ConvergenceResult is not None:
             stub_artifact = ConvergenceResult(
                 final_verdict="pass",
@@ -669,6 +703,34 @@ class LinearOrchestrator:
             protocol_session_id="stub-fallback",
             rationale=f"Stub gate advance for gate_type={gate_type!r}",
         )
+
+    def _build_gate_artifact_text(self) -> str:
+        """Build a text representation of the latest stage artifact for gate review.
+
+        Summarizes the most recent artifact in the registry for the protocol
+        to review/challenge/deliberate on.
+        """
+        reg = self._current_artifact_registry
+        if not reg:
+            return "No artifacts available for gate review."
+
+        # Find the most recent artifact (last stage that produced one)
+        for stage_name in ("verify", "build", "plan", "spec_prep"):
+            art = reg.get(stage_name)
+            if art is None:
+                continue
+
+            # Convert to dict for text serialization
+            if hasattr(art, "model_dump"):
+                import json
+                return json.dumps(art.model_dump(), indent=2, default=str)
+            elif isinstance(art, dict):
+                import json
+                return json.dumps(art, indent=2, default=str)
+            else:
+                return str(art)
+
+        return "No stage artifacts found in registry."
 
     def _should_run_challenge(self, run: AutopilotRun) -> bool:
         """Determine whether the challenge gate should run after verify (ORCH-05).

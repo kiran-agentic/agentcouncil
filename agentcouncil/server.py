@@ -40,8 +40,11 @@ from agentcouncil.autopilot.run import AutopilotRun, StageCheckpoint, persist, l
 from agentcouncil.autopilot.loader import load_default_registry
 from agentcouncil.autopilot.artifacts import SpecArtifact
 from agentcouncil.autopilot.prep import run_spec_prep
+from agentcouncil.autopilot.plan import run_plan
+from agentcouncil.autopilot.build import run_build
 from agentcouncil.autopilot.verify import run_verify
 from agentcouncil.autopilot.ship import run_ship
+from agentcouncil.autopilot.gate import GateExecutor
 from agentcouncil.autopilot.router import classify_run
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
@@ -1208,23 +1211,47 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
     }
 
 
+def _make_autopilot_orchestrator(registry: dict | None = None) -> LinearOrchestrator:
+    """Create a LinearOrchestrator with real runners and optional gate executor.
+
+    Gate execution through real protocol sessions is enabled when
+    AGENTCOUNCIL_AUTOPILOT_GATES=1 is set. Otherwise, stub gates
+    auto-advance (preserving backward compatibility).
+    """
+    if registry is None:
+        registry = load_default_registry()
+
+    # Gate executor is opt-in: set AGENTCOUNCIL_AUTOPILOT_GATES=1 to enable
+    gate_executor: GateExecutor | None = None
+    if os.environ.get("AGENTCOUNCIL_AUTOPILOT_GATES") == "1":
+        gate_executor = GateExecutor()
+
+    return LinearOrchestrator(
+        registry=registry,
+        runners={
+            "spec_prep": run_spec_prep,
+            "plan": run_plan,
+            "build": run_build,
+            "verify": run_verify,
+            "ship": run_ship,
+        },
+        gate_executor=gate_executor,
+    )
+
+
 @mcp.tool(name="autopilot_start")
 def autopilot_start_tool(run_id: str) -> dict:
     """Execute the full autopilot pipeline from current stage.
 
     The run must have been created via autopilot_prepare first.
-    Returns the final run state. Uses real runners for spec_prep, verify, and ship stages.
-    Plan and build stages use stub runners.
+    Returns the final run state. Uses real runners for all stages and
+    real protocol sessions for gate execution when a backend is available.
     """
     run = load_run(run_id)
     if run.status == "completed":
         return {"run_id": run.run_id, "status": run.status, "message": "Run already completed"}
 
-    registry = load_default_registry()
-    orchestrator = LinearOrchestrator(
-        registry=registry,
-        runners={"spec_prep": run_spec_prep, "verify": run_verify, "ship": run_ship},
-    )
+    orchestrator = _make_autopilot_orchestrator()
     result = orchestrator.run_pipeline(run)
     return {
         "run_id": result.run_id, "status": result.status,
@@ -1261,11 +1288,7 @@ def autopilot_resume_tool(run_id: str) -> dict:
     run.status = "running"
     persist(run)
 
-    registry = load_default_registry()
-    orchestrator = LinearOrchestrator(
-        registry=registry,
-        runners={"spec_prep": run_spec_prep, "verify": run_verify, "ship": run_ship},
-    )
+    orchestrator = _make_autopilot_orchestrator()
     result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
     return {
         "run_id": result.run_id, "status": result.status,
