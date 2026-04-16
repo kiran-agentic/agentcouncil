@@ -60,6 +60,7 @@ mcp = FastMCP("agentcouncil", version="0.2.0")
 
 _SESSIONS: dict[str, OutsideSession] = {}
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+_PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Task
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +189,7 @@ async def outside_start_tool(
     prompt: str,
     profile: str | None = None,
     model: str | None = None,
+    await_response: bool = True,
 ) -> dict:
     """Start a multi-turn session with an outside LLM backend.
 
@@ -198,9 +200,16 @@ async def outside_start_tool(
         prompt  — First message to send to the outside backend.
         profile — Named backend profile from .agentcouncil.json.
         model   — Optional model override (takes precedence over profile.model).
+        await_response — If True (default), blocks until the outside agent responds
+            and returns the response. If False, fires the prompt in the background
+            and returns immediately with status "pending". Use outside_read to
+            fetch the response later. Set to False when you want to do work in
+            parallel (e.g. write your own proposal while the outside agent works).
 
     Returns:
-        Dict with "session_id" (UUID string) and "response" (str).
+        Dict with "session_id" (UUID string) and either:
+        - "response" (str) when await_response=True
+        - "status": "pending" when await_response=False
     """
     provider = _make_provider(profile, model)
 
@@ -218,15 +227,68 @@ async def outside_start_tool(
     )
     try:
         await session.open()
-        response = await session.call(prompt)
     except Exception:
         await provider.close()
         await session.close()
         raise
+
     session_id = str(uuid.uuid4())
     _SESSIONS[session_id] = session
     _SESSION_LOCKS[session_id] = asyncio.Lock()
-    return {"session_id": session_id, "response": response}
+
+    if await_response:
+        try:
+            response = await session.call(prompt)
+        except Exception:
+            del _SESSIONS[session_id]
+            del _SESSION_LOCKS[session_id]
+            await provider.close()
+            await session.close()
+            raise
+        return {"session_id": session_id, "response": response}
+    else:
+        # Fire prompt in background — caller uses outside_read to get response
+        task = asyncio.create_task(session.call(prompt))
+        _PENDING_RESPONSES[session_id] = task
+        return {"session_id": session_id, "status": "pending"}
+
+
+@mcp.tool(name="outside_read")
+async def outside_read_tool(
+    session_id: str,
+) -> dict:
+    """Read the pending response from a non-blocking outside_start call.
+
+    Blocks until the outside agent's response is ready, then returns it.
+    Only valid for sessions started with await_response=False.
+
+    Args:
+        session_id — UUID string returned by outside_start.
+
+    Returns:
+        Dict with "response" (str).
+
+    Raises:
+        ValueError: if session_id has no pending response.
+    """
+    task = _PENDING_RESPONSES.pop(session_id, None)
+    if task is None:
+        raise ValueError(
+            f"No pending response for session {session_id!r}. "
+            f"Either the session was started with await_response=True, "
+            f"or the response was already read."
+        )
+    try:
+        response = await task
+    except Exception:
+        # Clean up session on failure
+        session = _SESSIONS.pop(session_id, None)
+        _SESSION_LOCKS.pop(session_id, None)
+        if session:
+            await session._provider.close()
+            await session.close()
+        raise
+    return {"response": response}
 
 
 @mcp.tool(name="outside_reply")
@@ -285,6 +347,10 @@ async def outside_close_tool(
             f"Unknown session_id: {session_id!r}. "
             f"Session may have expired or server was restarted."
         )
+    # Cancel any pending background task
+    pending = _PENDING_RESPONSES.pop(session_id, None)
+    if pending and not pending.done():
+        pending.cancel()
     # Acquire lock BEFORE removing from registry to prevent reply/close race
     lock = _SESSION_LOCKS.get(session_id)
     if lock:

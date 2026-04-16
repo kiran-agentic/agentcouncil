@@ -1,7 +1,7 @@
 ---
 name: brainstorm
 description: Run the AgentCouncil deliberation protocol. You (Claude) act as orchestrator AND lead agent. An independent outside agent provides a second perspective via the AgentCouncil session API. Use when you want genuinely independent perspectives before converging on a decision.
-allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
+allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_read mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [topic or question to brainstorm]
 ---
 
@@ -44,11 +44,11 @@ For prompt construction:
 - If `workspace_access` is `"native"`: include file paths in the brief for the outside agent to read.
 - If `workspace_access` is `"assisted"` or `"none"`: read the relevant files yourself and include their contents in the brief.
 
-Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text and `profile` set to the backend argument (or omit `profile` for default). Save `session_id` from the response. The outside agent is now working on its proposal.
+Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text, `profile` set to the backend argument (or omit `profile` for default), and `await_response` set to `false`. This fires the brief to the outside agent and returns immediately with `session_id` and `status: "pending"`. The outside agent is now working on its proposal in the background.
 
 ### Step 3: Write YOUR proposal (parallel with outside agent)
 
-While the outside agent processes the brief, write your own independent proposal. You have the full conversation context — use it. Be specific and opinionated.
+The outside agent is processing the brief in the background. Write your own independent proposal NOW — do not wait. You have the full conversation context — use it. Be specific and opinionated.
 
 Display it clearly labeled as **Claude's proposal**.
 
@@ -56,7 +56,7 @@ Display it clearly labeled as **Claude's proposal**.
 
 ### Step 4: Read outside agent's proposal and share yours
 
-Read the outside agent's proposal from the `outside_start` response (Step 2).
+Call `mcp__agentcouncil__outside_read` with the saved `session_id` to fetch the outside agent's response (this blocks until ready, but the agent has been working since Step 2).
 
 Display it clearly labeled as **Outside agent's proposal**.
 
