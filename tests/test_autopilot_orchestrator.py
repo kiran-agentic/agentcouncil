@@ -1958,7 +1958,7 @@ class TestDynamicGatePromotion:
 
         # Use a subclass that overrides _run_gate to inject the not_ready artifact
         class _InjectNotReadyChallengeOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "challenge":
                     self._last_raw_artifact = challenge_artifact
                     return GateDecision(
@@ -2010,7 +2010,7 @@ class TestDynamicGatePromotion:
         convergence_result = _make_convergence_result_with_finding("critical")
 
         class _InjectCriticalFindingOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "review_loop":
                     self._last_raw_artifact = convergence_result
                     return GateDecision(
@@ -2045,7 +2045,7 @@ class TestDynamicGatePromotion:
         convergence_result = _make_convergence_result_with_finding("high")
 
         class _InjectHighFindingOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "review_loop":
                     self._last_raw_artifact = convergence_result
                     return GateDecision(
@@ -2080,7 +2080,7 @@ class TestDynamicGatePromotion:
         convergence_result = _make_convergence_result_with_finding("low")
 
         class _InjectLowFindingOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "review_loop":
                     self._last_raw_artifact = convergence_result
                     return GateDecision(
@@ -2128,7 +2128,7 @@ class TestDynamicGatePromotion:
         runners["build"] = tracking_build_runner
 
         class _InjectCriticalFindingPlanOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "review_loop":
                     self._last_raw_artifact = convergence_result
                     return GateDecision(
@@ -2165,7 +2165,7 @@ class TestDynamicGatePromotion:
         original_promoted_at = "2026-01-01T00:00:00+00:00"
 
         class _InjectCriticalFindingOrchestrator(LinearOrchestrator):
-            def _run_gate(self, gate_type: str) -> GateDecision:
+            def _run_gate(self, gate_type: str, prior_review_context: str | None = None) -> GateDecision:
                 if gate_type == "review_loop":
                     self._last_raw_artifact = convergence_result
                     return GateDecision(
