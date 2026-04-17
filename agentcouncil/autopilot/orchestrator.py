@@ -573,10 +573,14 @@ class LinearOrchestrator:
                 persist(run)
                 break
 
-            # Run the gate with retry policy from manifest (SAFE-05)
+            # Run the gate with retry policy from manifest (SAFE-05).
+            # On revision retries, pass the prior gate's revision_guidance so
+            # the reviewer can verify whether prior findings were resolved.
+            prior_review_context = checkpoint.revision_guidance
             try:
                 gate_decision, raw_artifact = self._run_gate_with_retry(
-                    gate_type, entry.manifest.retry_policy
+                    gate_type, entry.manifest.retry_policy,
+                    prior_review_context=prior_review_context,
                 )
             except Exception as exc:
                 # All retries exhausted — escalate to paused_for_approval
@@ -634,7 +638,11 @@ class LinearOrchestrator:
                 persist(run)
                 return
 
-    def _run_gate(self, gate_type: str) -> GateDecision:
+    def _run_gate(
+        self,
+        gate_type: str,
+        prior_review_context: Optional[str] = None,
+    ) -> GateDecision:
         """Run a gate and return a GateDecision.
 
         Priority order:
@@ -644,6 +652,9 @@ class LinearOrchestrator:
 
         Args:
             gate_type: The gate type string (e.g., "review_loop", "challenge").
+            prior_review_context: Findings from the prior gate cycle on this
+                stage. Passed to the gate so the reviewer can verify whether
+                prior findings were resolved by the revision.
 
         Returns:
             A normalized GateDecision.
@@ -666,6 +677,7 @@ class LinearOrchestrator:
                             break
                 decision, raw = self._gate_executor.run_gate(
                     gate_type, artifact_text=artifact_text, stage_name=stage_name,
+                    prior_review_context=prior_review_context,
                 )
                 self._last_raw_artifact = raw
                 return decision
@@ -817,6 +829,7 @@ class LinearOrchestrator:
         self,
         gate_type: str,
         retry_policy: str,
+        prior_review_context: Optional[str] = None,
     ) -> tuple[GateDecision, Any]:
         """Run gate with retry according to manifest retry_policy.
 
@@ -839,7 +852,7 @@ class LinearOrchestrator:
             Exception: Re-raised from gate runner if all retries are exhausted.
         """
         try:
-            result = self._run_gate(gate_type)
+            result = self._run_gate(gate_type, prior_review_context=prior_review_context)
             return result, self._last_raw_artifact
         except Exception:
             if retry_policy == "none":
@@ -855,7 +868,7 @@ class LinearOrchestrator:
                 # No fallback registered — fall through to retry primary once
 
             # "once" (and "backend_fallback" with no fallback): retry primary gate
-            result = self._run_gate(gate_type)
+            result = self._run_gate(gate_type, prior_review_context=prior_review_context)
             return result, self._last_raw_artifact
 
     def _maybe_promote_tier(

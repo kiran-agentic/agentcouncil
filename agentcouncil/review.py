@@ -34,6 +34,7 @@ You are reviewing an artifact. Analyze it independently and produce your finding
 
 {objective_section}
 {focus_section}
+{prior_context_section}
 
 Produce an independent review. For each finding, state:
 - What the issue is
@@ -54,6 +55,7 @@ Read these files:
 
 {objective_section}
 {focus_section}
+{prior_context_section}
 
 Produce an independent review. For each finding, state:
 - What the issue is
@@ -80,6 +82,16 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
         items = "\n".join(f"- {area}" for area in ri.focus_areas)
         focus_section = f"## Focus Areas\n{items}"
 
+    prior_context_section = ""
+    if ri.prior_review_context:
+        prior_context_section = (
+            "## Prior Review Context\n"
+            "This artifact is a revision. The prior review produced the findings below. "
+            "Verify each one: is it resolved by this revision, still present, or newly regressed? "
+            "Also flag any NEW issues introduced by the revision itself.\n\n"
+            f"{ri.prior_review_context}"
+        )
+
     if workspace_access == "native" and ri.file_paths:
         file_list = "\n".join(f"- {p}" for p in ri.file_paths)
         return REVIEW_INPUT_PROMPT_PATHS.format(
@@ -87,6 +99,7 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
             file_list=file_list,
             objective_section=objective_section,
             focus_section=focus_section,
+            prior_context_section=prior_context_section,
         )
 
     return REVIEW_INPUT_PROMPT.format(
@@ -94,6 +107,7 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
         artifact=ri.artifact,
         objective_section=objective_section,
         focus_section=focus_section,
+        prior_context_section=prior_context_section,
     )
 
 

@@ -1256,6 +1256,7 @@ async def review_loop_tool(
     max_iterations: int = 3,
     backend: str | None = None,
     file_paths: list[str] | None = None,
+    prior_review_context: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
@@ -1274,6 +1275,9 @@ async def review_loop_tool(
         max_iterations: Maximum iterations (default 3, hard cap 10).
         backend: Backend profile for the outside reviewer.
         file_paths: File paths for native-access backends to read directly.
+        prior_review_context: Findings from a prior review cycle. Pass on revision
+            retries so the reviewer can verify whether prior issues were resolved
+            and flag any new issues introduced by the revision.
     """
     import time as _time
 
@@ -1302,6 +1306,7 @@ async def review_loop_tool(
                 max_iterations=max_iterations,
                 file_paths=file_paths,
                 workspace_access=ws_access,
+                prior_review_context=prior_review_context,
             )
         finally:
             await provider.close()
@@ -1319,6 +1324,7 @@ async def review_loop_tool(
             max_iterations=max_iterations,
             file_paths=file_paths,
             workspace_access="none",  # fallback path — unknown capability
+            prior_review_context=prior_review_context,
         )
 
     return result.model_dump()

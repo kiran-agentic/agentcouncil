@@ -156,6 +156,8 @@ class GateExecutor:
         """Run review_loop protocol and normalize the result."""
         from agentcouncil.convergence import review_loop
 
+        prior_review_context = kwargs.get("prior_review_context")
+
         provider, session, outside, lead = self._create_session()
 
         async def _execute() -> Any:
@@ -168,6 +170,7 @@ class GateExecutor:
                     lead_adapter=lead,
                     review_objective=f"Gate review for stage '{stage_name}'",
                     max_iterations=3,
+                    prior_review_context=prior_review_context,
                 )
                 return result
             finally:

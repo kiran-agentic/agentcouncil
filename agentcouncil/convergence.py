@@ -183,6 +183,7 @@ async def review_loop(
     outside_meta: Optional[TranscriptMeta] = None,
     file_paths: Optional[list[str]] = None,
     workspace_access: str = "none",
+    prior_review_context: Optional[str] = None,
 ) -> ConvergenceResult:
     """Run an iterative review convergence loop (CL-01, CL-02).
 
@@ -218,6 +219,7 @@ async def review_loop(
         focus_areas=focus_areas or [],
         rounds=1,
         file_paths=file_paths or [],
+        prior_review_context=prior_review_context,
     )
 
     review_result = await review(

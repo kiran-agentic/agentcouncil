@@ -146,6 +146,7 @@ class ReviewInput(BaseModel):
     focus_areas: list[str] = Field(default_factory=list)
     rounds: int = 1
     file_paths: list[str] = Field(default_factory=list)  # when set + workspace_access=native, agents read files directly
+    prior_review_context: Optional[str] = None  # findings from a prior review cycle; used on revision retries to focus the reviewer on whether prior issues were resolved
 
 
 class Finding(BaseModel):

@@ -244,6 +244,8 @@ Every gate follows the same pattern:
    - **revise** (revise/needs_hardening) → fix issues, re-run the gate (max 2 revisions per gate)
    - **block** (escalate/not_ready) → stop, display findings, ask the user
 
+**On revision re-runs, pass `prior_review_context`.** When re-running a `review_loop` gate after a revision, pass the prior cycle's findings (formatted as a short summary including finding IDs, titles, severities, and your resolution notes) as the `prior_review_context` parameter. This focuses the reviewer on whether the revision actually resolved prior issues and whether it introduced new ones — instead of re-discovering the same terrain from scratch.
+
 If a gate revision loop exceeds 2 iterations, stop and ask the user — do not loop forever.
 
 ## Rules
