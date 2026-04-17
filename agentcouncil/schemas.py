@@ -412,7 +412,7 @@ class ConvergenceResult(BaseModel):
     iterations: list[ConvergenceIteration] = Field(default_factory=list)
     final_findings: list[Finding] = Field(default_factory=list)
     total_iterations: int
-    exit_reason: Literal["all_verified", "max_iterations", "approved", "single_pass"]
+    exit_reason: Literal["all_verified", "max_iterations", "approved", "native_workspace_single_pass"]
     final_verdict: Literal["pass", "revise", "escalate"]
 
 
