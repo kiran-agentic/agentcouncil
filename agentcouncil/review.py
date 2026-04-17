@@ -25,6 +25,12 @@ __all__ = ["review"]
 # Prompt templates
 # ---------------------------------------------------------------------------
 
+_TOOL_HINT = (
+    "When your tool registry includes symbol-level tools (e.g. find_symbol, "
+    "get_symbols_overview, find_referencing_symbols), prefer them over text "
+    "search for locating definitions and usages — they are faster and more precise."
+)
+
 REVIEW_INPUT_PROMPT = """\
 You are reviewing an artifact. Analyze it independently and produce your findings.
 
@@ -42,6 +48,8 @@ Produce an independent review. For each finding, state:
 - Its impact on the system
 - Evidence from the artifact
 - Your confidence level (high/medium/low)
+
+{tool_hint}
 
 Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
 
@@ -63,6 +71,8 @@ Produce an independent review. For each finding, state:
 - Its impact on the system
 - Evidence from the artifact (reference file paths and line numbers)
 - Your confidence level (high/medium/low)
+
+{tool_hint}
 
 Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
 
@@ -100,6 +110,7 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
             objective_section=objective_section,
             focus_section=focus_section,
             prior_context_section=prior_context_section,
+            tool_hint=_TOOL_HINT,
         )
 
     return REVIEW_INPUT_PROMPT.format(
@@ -108,6 +119,7 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
         objective_section=objective_section,
         focus_section=focus_section,
         prior_context_section=prior_context_section,
+        tool_hint=_TOOL_HINT,
     )
 
 
