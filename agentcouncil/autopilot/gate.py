@@ -120,8 +120,9 @@ class GateExecutor:
         from agentcouncil.session import OutsideSession, OutsideSessionAdapter
         from agentcouncil.server import _make_provider
 
+        from agentcouncil.server import _get_workspace_sync
         provider = _make_provider(profile=self._backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=self._backend)
         outside = OutsideSessionAdapter(session)
         lead = ClaudeAdapter(model="opus", timeout=300)

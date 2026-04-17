@@ -44,7 +44,11 @@ def run_codebase_research(
     Returns:
         Populated CodebaseResearchBrief.
     """
-    root = project_root if project_root is not None else Path.cwd()
+    if project_root is None:
+        from agentcouncil.server import _get_workspace_sync
+        root = Path(_get_workspace_sync())
+    else:
+        root = project_root
 
     # Walk Python files (cap at 200)
     all_py_files: list[str] = []

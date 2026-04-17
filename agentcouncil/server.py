@@ -1226,6 +1226,8 @@ async def review_loop_tool(
     try:
         provider = _make_provider(profile=backend)
         ws_access = provider.workspace_access
+        log.warning("review_loop: provider=%s, workspace_access=%s, workspace=%s, backend=%r",
+                     type(provider).__name__, ws_access, _get_workspace_sync(), backend)
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=backend)
         await session.open()
@@ -1245,7 +1247,8 @@ async def review_loop_tool(
         finally:
             await provider.close()
             await session.close()
-    except ValueError:
+    except ValueError as exc:
+        log.warning("review_loop: _make_provider failed (%s), falling back to legacy adapter", exc)
         outside = resolve_outside_adapter(backend, timeout=300)
         result = await review_loop(
             artifact=artifact,

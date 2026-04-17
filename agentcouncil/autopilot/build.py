@@ -257,7 +257,8 @@ def run_build(
         research = prep.get("research", {})
         test_commands = research.get("test_commands", [])
 
-    cwd = str(Path.cwd())
+    from agentcouncil.server import _get_workspace_sync
+    cwd = _get_workspace_sync()
 
     # Build task lookup
     task_map = {t.task_id: t for t in plan.tasks}

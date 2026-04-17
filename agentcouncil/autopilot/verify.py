@@ -84,7 +84,8 @@ def discover_verification_environment(run: AutopilotRun) -> VerificationEnvironm
 
     Checks project types, test commands, and Playwright availability.
     """
-    cwd = Path.cwd()
+    from agentcouncil.server import _get_workspace_sync
+    cwd = Path(_get_workspace_sync())
 
     # Playwright availability check
     playwright_available = importlib.util.find_spec("playwright") is not None
@@ -359,7 +360,8 @@ def run_verify(
         generated_tests = generate_probes(acceptance_probes, env)
 
     # Execute each criterion
-    cwd = str(Path.cwd())
+    from agentcouncil.server import _get_workspace_sync
+    cwd = _get_workspace_sync()
     verdicts: list[CriterionVerification] = []
     for probe in acceptance_probes:
         verdict = execute_criterion(probe, env, cwd=cwd)
