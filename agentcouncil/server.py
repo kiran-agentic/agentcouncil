@@ -17,11 +17,13 @@ logging.basicConfig(
 
 from fastmcp import FastMCP, Context
 
+log = logging.getLogger("agentcouncil.server")
+
 from agentcouncil.adapters import (
     ClaudeAdapter,
     resolve_outside_adapter, resolve_outside_backend,
 )
-from agentcouncil.config import ProfileLoader, BackendProfile
+from agentcouncil.config import ProfileLoader, BackendProfile, set_project_dir
 from agentcouncil.session import OutsideSession, OutsideSessionAdapter
 from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.brief import Brief, BriefBuilder, CodeExcerpt, ContaminatedBriefError, CONTAMINATION_PATTERNS
@@ -96,6 +98,7 @@ async def _resolve_workspace(ctx=None) -> str:
                 if uri.startswith("file://"):
                     _resolved_workspace = uri.removeprefix("file://")
                     log.info("Workspace resolved from MCP roots: %s", _resolved_workspace)
+                    _sync_project_dir()
                     return _resolved_workspace
         except Exception:
             pass  # Client may not support roots
@@ -105,17 +108,26 @@ async def _resolve_workspace(ctx=None) -> str:
     if env_cwd:
         _resolved_workspace = env_cwd
         log.info("Workspace resolved from AGENTCOUNCIL_CWD: %s", _resolved_workspace)
+        _sync_project_dir()
         return _resolved_workspace
 
     # Last resort
     _resolved_workspace = str(Path.cwd())
     log.info("Workspace using Path.cwd() fallback: %s", _resolved_workspace)
+    _sync_project_dir()
     return _resolved_workspace
 
 
 def _get_workspace_sync() -> str:
     """Return cached workspace or CWD. Used by _make_provider and OutsideRuntime."""
     return _resolved_workspace or str(Path.cwd())
+
+
+def _sync_project_dir() -> None:
+    """Push resolved workspace to config module so ProfileLoader finds the right .agentcouncil.json."""
+    ws = _resolved_workspace
+    if ws:
+        set_project_dir(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +157,9 @@ def _make_provider(
         ValueError: if the resolved result is an unrecognised legacy backend string.
         ProviderError: if the provider name in BackendProfile is unrecognised.
     """
+    # Ensure config sees the right project directory
+    if workspace:
+        set_project_dir(workspace)
     resolved = ProfileLoader().resolve(profile_name=profile)
 
     if isinstance(resolved, str):

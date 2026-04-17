@@ -18,7 +18,27 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, JsonConfigSettingsSource
 
-__all__ = ["BackendProfile", "AgentCouncilConfig", "ProfileLoader", "ConfigSource", "EffectiveConfigEntry"]
+__all__ = ["BackendProfile", "AgentCouncilConfig", "ProfileLoader", "ConfigSource", "EffectiveConfigEntry", "set_project_dir"]
+
+# ---------------------------------------------------------------------------
+# Project directory override — set by the MCP server after workspace resolution.
+# When set, config sources use this instead of Path.cwd() for .agentcouncil.json.
+# ---------------------------------------------------------------------------
+
+_project_dir: str | None = None
+
+
+def set_project_dir(path: str) -> None:
+    """Set the project directory for config resolution. Called once by the server."""
+    global _project_dir
+    _project_dir = path
+
+
+def _get_project_dir() -> Path:
+    """Return the project directory, falling back to CWD."""
+    if _project_dir is not None:
+        return Path(_project_dir)
+    return Path.cwd()
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -132,7 +152,7 @@ class AgentCouncilConfig(BaseSettings):
 
         Called at instantiation time by pydantic-settings.
         """
-        project_cfg = Path.cwd() / ".agentcouncil.json"
+        project_cfg = _get_project_dir() / ".agentcouncil.json"
         global_cfg = Path.home() / ".agentcouncil.json"
         return (
             kwargs["init_settings"],  # skill_arg (highest priority)
@@ -218,7 +238,7 @@ class ProfileLoader:
             source_label is one of: skill_arg, project_config, global_config,
             env_var, legacy_env_var, default.
         """
-        project_path = Path.cwd() / ".agentcouncil.json"
+        project_path = _get_project_dir() / ".agentcouncil.json"
         global_path = Path.home() / ".agentcouncil.json"
 
         # Call each source independently to get its raw dict
