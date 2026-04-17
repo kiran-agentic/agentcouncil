@@ -73,47 +73,106 @@ _PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Tas
 _resolved_workspace: str | None = None
 
 
-async def _resolve_workspace(ctx=None) -> str:
-    """Resolve the project workspace directory from MCP roots.
+def _parent_process_cwd() -> str | None:
+    """Get the cwd of the parent process (the Claude Code CLI).
 
-    Called once from the first tool invocation with a Context. Caches the
-    result globally so all subsequent calls (including sync) use it.
+    Claude Code launches the MCP server as a subprocess from the user's project
+    directory. The parent's cwd is therefore the project directory, even when
+    the server itself runs from the plugin cache.
+
+    Tries /proc first (Linux), then lsof (macOS/BSD). Returns None if neither
+    works or the detected cwd is clearly wrong (e.g. plugin cache, root).
+    """
+    import subprocess
+
+    ppid = os.getppid()
+    if ppid <= 1:
+        return None
+
+    # Linux: /proc/<pid>/cwd is a symlink
+    proc_cwd = Path(f"/proc/{ppid}/cwd")
+    if proc_cwd.exists():
+        try:
+            return str(proc_cwd.resolve())
+        except OSError:
+            pass
+
+    # macOS/BSD: use lsof
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(ppid), "-d", "cwd", "-Fn"],
+            capture_output=True, text=True, timeout=2,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("n/"):
+                return line[1:]
+    except (OSError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return None
+
+
+def _is_plausible_project_dir(path: str) -> bool:
+    """Reject paths that are clearly not a user project."""
+    if not path or path == "/":
+        return False
+    # Plugin cache and Claude internals are never the user's project
+    bad_markers = (".claude/plugins/cache", "/claude/", "site-packages", "/.venv")
+    return not any(m in path for m in bad_markers)
+
+
+async def _resolve_workspace(ctx=None) -> str:
+    """Resolve the project workspace directory.
+
+    Called once from the first tool invocation. Caches the result globally
+    so all subsequent calls (including sync) use it.
 
     Priority:
     1. Cached result from a previous call
     2. MCP roots from the client (first file:// root URI)
     3. AGENTCOUNCIL_CWD env var
-    4. Path.cwd() fallback (for tests and non-MCP contexts)
+    4. Parent process cwd (the Claude Code CLI's working directory)
+    5. Path.cwd() fallback (for tests and non-MCP contexts)
     """
     global _resolved_workspace
     if _resolved_workspace is not None:
         return _resolved_workspace
 
-    # Try MCP roots from client context
+    # 1. Try MCP roots from client context
     if ctx is not None:
         try:
             roots = await ctx.list_roots()
             if roots:
                 uri = str(roots[0].uri)
                 if uri.startswith("file://"):
-                    _resolved_workspace = uri.removeprefix("file://")
-                    log.info("Workspace resolved from MCP roots: %s", _resolved_workspace)
-                    _sync_project_dir()
-                    return _resolved_workspace
-        except Exception:
-            pass  # Client may not support roots
+                    candidate = uri.removeprefix("file://")
+                    if _is_plausible_project_dir(candidate):
+                        _resolved_workspace = candidate
+                        log.warning("Workspace resolved from MCP roots: %s", _resolved_workspace)
+                        _sync_project_dir()
+                        return _resolved_workspace
+        except Exception as exc:
+            log.debug("MCP roots unavailable: %s", exc)
 
-    # Env var fallback
+    # 2. Env var override
     env_cwd = os.environ.get("AGENTCOUNCIL_CWD")
-    if env_cwd:
+    if env_cwd and _is_plausible_project_dir(env_cwd):
         _resolved_workspace = env_cwd
-        log.info("Workspace resolved from AGENTCOUNCIL_CWD: %s", _resolved_workspace)
+        log.warning("Workspace resolved from AGENTCOUNCIL_CWD: %s", _resolved_workspace)
         _sync_project_dir()
         return _resolved_workspace
 
-    # Last resort
+    # 3. Parent process cwd (Claude Code CLI runs in the project dir)
+    parent_cwd = _parent_process_cwd()
+    if parent_cwd and _is_plausible_project_dir(parent_cwd):
+        _resolved_workspace = parent_cwd
+        log.warning("Workspace resolved from parent process cwd: %s", _resolved_workspace)
+        _sync_project_dir()
+        return _resolved_workspace
+
+    # 4. Last resort
     _resolved_workspace = str(Path.cwd())
-    log.info("Workspace using Path.cwd() fallback: %s", _resolved_workspace)
+    log.warning("Workspace using Path.cwd() fallback (may be wrong): %s", _resolved_workspace)
     _sync_project_dir()
     return _resolved_workspace
 
