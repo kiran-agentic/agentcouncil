@@ -240,7 +240,11 @@ async def review_loop(
     ))
     finding_statuses = {f.id: "open" for f in current_findings}
 
-    # Check if no findings — immediate pass
+    # Single-pass: return findings after one review.
+    # The previous internal loop had the lead *describe* fixes without applying them,
+    # then asked the outside agent to re-review unchanged files/text — which always
+    # returned the same findings. The outer loop (Claude applying real fixes and
+    # re-calling review_loop) is what actually converges. See skills/review/SKILL.md.
     if not current_findings:
         return ConvergenceResult(
             iterations=iterations,
@@ -250,104 +254,11 @@ async def review_loop(
             final_verdict="pass",
         )
 
-    # When workspace_access is native, the inner loop can't converge because
-    # the lead only describes fixes — it doesn't apply them. Files remain unchanged,
-    # so the outside agent finds the same issues on re-review. Return after the
-    # first iteration and let the caller (Claude) apply fixes and re-invoke.
-    if workspace_access == "native" and file_paths:
-        return ConvergenceResult(
-            iterations=iterations,
-            final_findings=current_findings,
-            total_iterations=1,
-            exit_reason="native_workspace_single_pass",
-            final_verdict=_derive_verdict(finding_statuses),
-        )
-
-    # Iterations 2..N: fix → scoped re-review → update statuses
-    # (only runs for non-native workspace where the artifact is text-based)
-    for iter_num in range(2, effective_max + 1):
-        # CL-04: Lead addresses findings
-        open_findings = [
-            f for f in current_findings
-            if finding_statuses.get(f.id) in ("open", "reopened")
-        ]
-
-        if not open_findings:
-            break
-
-        # Ask lead to address open findings
-        findings_summary = "\n".join(
-            f"- [{f.id}] {f.title} ({f.severity}): {f.description}"
-            for f in open_findings
-        )
-        lead_prompt = (
-            f"The following findings need to be addressed:\n{findings_summary}\n\n"
-            f"Describe what changes you would make to fix each finding."
-        )
-        from agentcouncil.adapters import AdapterError
-
-        try:
-            addressed_changes = await lead_adapter.acall(lead_prompt)
-        except AdapterError as e:
-            log.warning("lead failed in convergence iteration %d: %s", iter_num, e)
-            addressed_changes = f"Lead error: {e}"
-
-        # CL-05: Scoped re-review
-        rereview_prompt = _build_rereview_prompt(
-            artifact, open_findings, addressed_changes,
-            file_paths=file_paths,
-            workspace_access=workspace_access,
-        )
-        try:
-            rereview_response = await outside_adapter.acall(rereview_prompt)
-        except AdapterError as e:
-            log.warning("outside failed in convergence re-review %d: %s", iter_num, e)
-            break
-
-        # Parse re-review response
-        iter_findings, approved = _parse_rereview_response(
-            rereview_response, current_findings, finding_statuses,
-        )
-
-        # Update statuses
-        for fi in iter_findings:
-            finding_statuses[fi.finding_id] = fi.status
-
-        iterations.append(ConvergenceIteration(
-            iteration=iter_num,
-            findings=iter_findings,
-            approved=approved,
-        ))
-
-        # CL-06: Check exit conditions
-        if approved:
-            return ConvergenceResult(
-                iterations=iterations,
-                final_findings=current_findings,
-                total_iterations=iter_num,
-                exit_reason="approved",
-                final_verdict=_derive_verdict(finding_statuses),
-            )
-
-        all_resolved = all(
-            s in ("verified", "wont_fix")
-            for s in finding_statuses.values()
-        )
-        if all_resolved:
-            return ConvergenceResult(
-                iterations=iterations,
-                final_findings=current_findings,
-                total_iterations=iter_num,
-                exit_reason="all_verified",
-                final_verdict=_derive_verdict(finding_statuses),
-            )
-
-    # CL-06b: Max iterations reached
     return ConvergenceResult(
         iterations=iterations,
         final_findings=current_findings,
-        total_iterations=len(iterations),
-        exit_reason="max_iterations",
+        total_iterations=1,
+        exit_reason="single_pass",
         final_verdict=_derive_verdict(finding_statuses),
     )
 

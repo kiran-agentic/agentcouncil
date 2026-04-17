@@ -87,84 +87,48 @@ def journal_dir(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_convergence_loop_all_verified(journal_dir):
-    """CL-06a: Loop exits when all findings reach verified status."""
+async def test_convergence_loop_no_findings_passes(journal_dir):
+    """Review with no findings returns all_verified immediately."""
     from agentcouncil.convergence import review_loop
     from agentcouncil.adapters import StubAdapter
 
-    # Iteration 1: review finds issues
-    review_1 = _make_review_json([_make_finding("R-01"), _make_finding("R-02")])
-    # Iteration 2: re-review verifies all
-    rereview = json.dumps({
-        "findings": [
-            {"finding_id": "R-01", "status": "verified", "reviewer_notes": "Fixed correctly"},
-            {"finding_id": "R-02", "status": "verified", "reviewer_notes": "Fixed"},
-        ],
-        "approved": True,
-    })
-    synthesis_1 = _make_review_json([_make_finding("R-01"), _make_finding("R-02")])
-
-    outside = StubAdapter([
-        "Outside initial review",
-        synthesis_1,
-        "Re-review response",
-        rereview,
-    ])
-    lead = StubAdapter([
-        "Lead review",
-        "Lead addressed: fixed R-01 and R-02",
-    ])
+    empty_review = _make_review_json([])
+    outside = StubAdapter(["Outside initial review", empty_review])
+    lead = StubAdapter(["Lead review"])
 
     result = await review_loop(
         artifact="def foo(): pass",
         artifact_type="code",
         outside_adapter=outside,
         lead_adapter=lead,
-        max_iterations=3,
     )
 
     assert isinstance(result, ConvergenceResult)
-    assert result.exit_reason in ("all_verified", "approved")
-    assert result.total_iterations >= 1
+    assert result.exit_reason == "all_verified"
+    assert result.total_iterations == 1
+    assert result.final_findings == []
 
 
 @pytest.mark.asyncio
-async def test_convergence_loop_max_iterations(journal_dir):
-    """CL-06b, CL-12: Loop exits at max_iterations."""
+async def test_convergence_loop_single_pass_with_findings(journal_dir):
+    """Review with findings returns single_pass — caller drives the outer fix loop."""
     from agentcouncil.convergence import review_loop
     from agentcouncil.adapters import StubAdapter
 
     review_json = _make_review_json([_make_finding("R-01", "high")])
-    # Re-review keeps finding open
-    rereview = json.dumps({
-        "findings": [
-            {"finding_id": "R-01", "status": "reopened", "reviewer_notes": "Still broken"},
-        ],
-        "approved": False,
-    })
-
-    # Provide enough responses for max_iterations=2
-    outside = StubAdapter([
-        "Outside review", review_json,
-        "Re-review 1", rereview,
-        "Re-review 2", rereview,
-    ])
-    lead = StubAdapter([
-        "Lead review",
-        "Lead fix attempt 1",
-        "Lead fix attempt 2",
-    ])
+    outside = StubAdapter(["Outside review", review_json])
+    lead = StubAdapter(["Lead review"])
 
     result = await review_loop(
         artifact="buggy code",
         artifact_type="code",
         outside_adapter=outside,
         lead_adapter=lead,
-        max_iterations=2,
     )
 
-    assert result.exit_reason == "max_iterations"
-    assert result.total_iterations == 2
+    assert result.exit_reason == "single_pass"
+    assert result.total_iterations == 1
+    assert len(result.final_findings) == 1
 
 
 @pytest.mark.asyncio
@@ -436,11 +400,10 @@ async def test_convergence_outside_error_during_rereview(journal_dir):
     result = await review_loop(
         artifact="code", artifact_type="code",
         outside_adapter=outside, lead_adapter=lead,
-        max_iterations=3,
     )
-    # Should exit gracefully on error, not crash
-    assert result.exit_reason == "max_iterations"
-    assert result.total_iterations >= 1
+    # Single-pass returns after initial review regardless of later errors
+    assert result.exit_reason in ("single_pass", "all_verified")
+    assert result.total_iterations == 1
 
 
 @pytest.mark.asyncio
