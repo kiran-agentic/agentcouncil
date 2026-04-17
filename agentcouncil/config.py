@@ -28,8 +28,9 @@ __all__ = ["BackendProfile", "AgentCouncilConfig", "ProfileLoader", "ConfigSourc
 _project_dir: str | None = None
 
 
-def set_project_dir(path: str) -> None:
-    """Set the project directory for config resolution. Called once by the server."""
+def set_project_dir(path: str | None) -> None:
+    """Set the project directory for config resolution. Called once by the server.
+    Pass None to reset (used in tests)."""
     global _project_dir
     _project_dir = path
 
