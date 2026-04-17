@@ -250,7 +250,21 @@ async def review_loop(
             final_verdict="pass",
         )
 
+    # When workspace_access is native, the inner loop can't converge because
+    # the lead only describes fixes — it doesn't apply them. Files remain unchanged,
+    # so the outside agent finds the same issues on re-review. Return after the
+    # first iteration and let the caller (Claude) apply fixes and re-invoke.
+    if workspace_access == "native" and file_paths:
+        return ConvergenceResult(
+            iterations=iterations,
+            final_findings=current_findings,
+            total_iterations=1,
+            exit_reason="native_workspace_single_pass",
+            final_verdict=_derive_verdict(finding_statuses),
+        )
+
     # Iterations 2..N: fix → scoped re-review → update statuses
+    # (only runs for non-native workspace where the artifact is text-based)
     for iter_num in range(2, effective_max + 1):
         # CL-04: Lead addresses findings
         open_findings = [

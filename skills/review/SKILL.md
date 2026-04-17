@@ -25,6 +25,12 @@ Otherwise, use **one-shot review** (the default protocol below).
 
 Present the ConvergenceResult showing iteration history, finding statuses, exit reason, and final verdict. Skip the one-shot protocol steps below (except Step 0).
 
+**Native workspace convergence loop:** When `exit_reason` is `"native_workspace_single_pass"` and there are open findings, the review_loop tool returns after one pass because the inner loop cannot converge on unchanged files. YOU must drive the fix-and-retry loop:
+1. Display the findings to the user
+2. Apply fixes for confirmed findings
+3. Call `review_loop` again with the same file_paths to verify fixes
+4. Repeat until clean or max 3 outer iterations, then present final state
+
 ## Backend Selection
 
 Parse the arguments for `backend=<value>` (e.g., `backend=codex`, `backend=claude`, `backend=ollama`). If omitted, the default backend is used. The `backend` argument selects which provider to use. Provider differences are handled automatically by the session layer.
