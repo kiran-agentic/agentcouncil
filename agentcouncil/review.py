@@ -26,9 +26,14 @@ __all__ = ["review"]
 # ---------------------------------------------------------------------------
 
 _TOOL_HINT = (
-    "When your tool registry includes symbol-level tools (e.g. find_symbol, "
-    "get_symbols_overview, find_referencing_symbols), prefer them over text "
-    "search for locating definitions and usages — they are faster and more precise."
+    "## Tool Usage\n"
+    "If tools under the `mcp__serena__*` namespace are available in your "
+    "registry, begin by calling `mcp__serena__initial_instructions` once to "
+    "load workspace context (this primes the symbol index). Then prefer "
+    "symbol-level tools (`find_symbol`, `get_symbols_overview`, "
+    "`find_referencing_symbols`) over text search (`Grep`) for locating "
+    "definitions and usages — they are faster and more precise. Fall back to "
+    "`Grep`/`Read` only for text patterns that aren't symbol lookups."
 )
 
 REVIEW_INPUT_PROMPT = """\
