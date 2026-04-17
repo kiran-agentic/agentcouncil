@@ -67,11 +67,12 @@ class AgentAdapter(abc.ABC):
 class CodexAdapter(AgentAdapter):
     """Invokes the local `codex exec` CLI to produce a response."""
 
-    def __init__(self, model: str | None = None, timeout: int = 120) -> None:
+    def __init__(self, model: str | None = None, timeout: int = 120, cwd: str | None = None) -> None:
         if not shutil.which("codex"):
             raise EnvironmentError("codex CLI not found on PATH")
         self._model = model
         self._timeout = timeout
+        self._cwd = cwd
 
     def call(self, prompt: str) -> str:
         with tempfile.NamedTemporaryFile(mode="r", suffix=".txt", delete=False) as f:
@@ -89,6 +90,13 @@ class CodexAdapter(AgentAdapter):
             ]
             if self._model:
                 cmd.extend(["-m", self._model])
+            effective_cwd = self._cwd
+            if effective_cwd is None:
+                try:
+                    from agentcouncil.server import _get_workspace_sync
+                    effective_cwd = _get_workspace_sync()
+                except Exception:
+                    effective_cwd = None
             subprocess.run(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -96,6 +104,7 @@ class CodexAdapter(AgentAdapter):
                 text=True,
                 timeout=self._timeout,
                 check=True,
+                cwd=effective_cwd,
             )
             with open(output_path) as f:
                 return f.read().strip()
@@ -113,11 +122,12 @@ class CodexAdapter(AgentAdapter):
 class ClaudeAdapter(AgentAdapter):
     """Invokes the local `claude` CLI as a subprocess, passing the prompt via stdin."""
 
-    def __init__(self, model: str | None = None, timeout: int = 120) -> None:
+    def __init__(self, model: str | None = None, timeout: int = 120, cwd: str | None = None) -> None:
         if not shutil.which("claude"):
             raise EnvironmentError("claude CLI not found on PATH")
         self._model = model
         self._timeout = timeout
+        self._cwd = cwd
 
     def call(self, prompt: str) -> str:
         cmd = [
@@ -126,11 +136,18 @@ class ClaudeAdapter(AgentAdapter):
             "--output-format",
             "text",
             "--no-session-persistence",
-            "--tools",
-            "",  # disable all tools — pure text responder
         ]
         if self._model:
             cmd.extend(["--model", self._model])
+        # Resolve cwd at call time — picks up the server's resolved workspace
+        # even if the adapter was constructed before workspace resolution.
+        effective_cwd = self._cwd
+        if effective_cwd is None:
+            try:
+                from agentcouncil.server import _get_workspace_sync
+                effective_cwd = _get_workspace_sync()
+            except Exception:
+                effective_cwd = None
         try:
             result = subprocess.run(
                 cmd,
@@ -139,6 +156,7 @@ class ClaudeAdapter(AgentAdapter):
                 text=True,
                 timeout=self._timeout,
                 check=True,
+                cwd=effective_cwd,
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:

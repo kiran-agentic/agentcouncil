@@ -209,7 +209,6 @@ def test_claude_call_subprocess_args(monkeypatch):
     assert "--output-format" in cmd
     assert "text" in cmd
     assert "--no-session-persistence" in cmd
-    assert "--tools" in cmd
     assert captured["input"] == "test prompt"
     assert result == "mock response"
 
