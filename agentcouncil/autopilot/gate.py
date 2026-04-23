@@ -299,13 +299,13 @@ class GateExecutor:
         provider, session, outside, lead = self._create_session()
 
         decide_input = DecideInput(
-            context=artifact_text,
-            question=f"Should stage '{stage_name}' output advance?",
+            decision=f"Should stage '{stage_name}' output advance to the next stage?",
             options=[
                 DecideOption(id="advance", label="Advance", description="Advance to next stage"),
                 DecideOption(id="revise", label="Revise", description="Send back for revision"),
                 DecideOption(id="block", label="Block", description="Block and escalate"),
             ],
+            criteria=artifact_text,
         )
 
         async def _execute() -> Any:
