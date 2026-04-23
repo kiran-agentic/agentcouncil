@@ -380,3 +380,47 @@ def test_session_id_defaults_to_unknown():
     artifact = _make_consensus()
     decision = _normalizer.normalize("brainstorm", artifact)
     assert decision.protocol_session_id == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# New tests for structured finding table
+# ---------------------------------------------------------------------------
+
+
+def test_guidance_from_findings_produces_structured_table():
+    """_guidance_from_findings must emit a markdown table, not prose."""
+    normalizer = GateNormalizer()
+
+    findings = [
+        _make_finding(id="F1", title="Missing input validation", severity="high",
+                      description="No validation on user-supplied path parameter"),
+        _make_finding(id="F2", title="N+1 query in list endpoint", severity="medium",
+                      description="Each item triggers a separate DB call"),
+    ]
+    guidance = normalizer._guidance_from_findings(findings, fallback="no findings")
+
+    assert "| ID |" in guidance
+    assert "| Title |" in guidance
+    assert "| Severity |" in guidance
+    assert "| Description |" in guidance
+    assert "F1" in guidance
+    assert "F2" in guidance
+    assert "; " not in guidance
+
+
+def test_guidance_from_findings_sorts_critical_first():
+    """Critical and high findings must appear before medium/low in the table."""
+    normalizer = GateNormalizer()
+
+    findings = [
+        _make_finding(id="F1", title="Low issue", severity="low", description="minor"),
+        _make_finding(id="F2", title="Critical issue", severity="critical", description="severe"),
+    ]
+    guidance = normalizer._guidance_from_findings(findings, fallback="no findings")
+    assert guidance.index("F2") < guidance.index("F1")
+
+
+def test_guidance_from_findings_fallback_when_empty():
+    """Empty findings list must return the fallback string."""
+    normalizer = GateNormalizer()
+    assert normalizer._guidance_from_findings([], fallback="use next_action") == "use next_action"

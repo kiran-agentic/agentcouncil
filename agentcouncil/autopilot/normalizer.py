@@ -288,16 +288,28 @@ class GateNormalizer:
     # ------------------------------------------------------------------
 
     def _guidance_from_findings(self, findings: list, fallback: str) -> str:
-        """Build revision guidance from high/critical findings; fall back to `fallback`."""
-        relevant = [
-            f.description
-            for f in findings
-            if getattr(f, "severity", None) in ("critical", "high")
-        ]
-        if relevant:
-            return "; ".join(relevant)
-        # If no high/critical findings, include all finding descriptions
-        all_descriptions = [f.description for f in findings if f.description]
-        if all_descriptions:
-            return "; ".join(all_descriptions)
-        return fallback
+        """Emit a structured markdown table of findings for the reviewer.
+
+        Sorted critical → high → medium → low so the most important issues
+        appear first. Returns fallback if findings is empty.
+        """
+        if not findings:
+            return fallback
+
+        _sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        sorted_findings = sorted(
+            findings,
+            key=lambda f: _sev_order.get(getattr(f, "severity", "low"), 3),
+        )
+
+        rows = []
+        for f in sorted_findings:
+            fid = getattr(f, "id", "—")
+            title = getattr(f, "title", "—")
+            severity = getattr(f, "severity", "—")
+            description = getattr(f, "description", "") or getattr(f, "impact", "—")
+            description = description.replace("|", "\\|")
+            rows.append(f"| {fid} | {title} | {severity} | {description} |")
+
+        header = "| ID | Title | Severity | Description |\n|---|---|---|---|"
+        return header + "\n" + "\n".join(rows)
