@@ -159,13 +159,25 @@ Read `agentcouncil/autopilot/workflows/build/workflow.md` — this is the execut
 
 For each task in `execution_order`, follow the increment cycle:
 
-**Implement:** Make the minimal change required. Touch only `task.target_files` unless deviation is documented.
+**Write test first (RED):** Before writing any implementation code, write a test that expresses the expected behavior. Run it — it must FAIL. A test that passes immediately proves nothing.
 
-**Test:** Run test commands. Do not advance if tests fail. Fix the implementation, not the tests.
+**Implement (GREEN):** Write the minimal code to make the failing test pass. Ask: "What is the simplest thing that could work?" Do not over-engineer. Three similar lines of code is better than a premature abstraction.
 
-**Verify:** Check the task's `acceptance_criteria` are met.
+**Confirm (PASS):** Run the test. It must pass. If it doesn't, fix the implementation — not the test.
+
+**Refactor:** With the test green, clean up the implementation without changing behavior. Run tests after any refactor step.
+
+**Verify:** Check the task's `acceptance_criteria` are met beyond what the test directly covers.
 
 **Commit:** Focused commit: `{type}({scope}): {description}`. Record the SHA.
+
+**Bug-fix tasks — prove-it pattern (REQUIRED):** For any task that fixes a bug:
+1. Write a test that reproduces the bug. Run it — it must FAIL (confirming the bug exists).
+2. Implement the fix.
+3. Run the test — it must PASS (confirming the fix works).
+4. Run the full test suite — no new failures (regression guard).
+
+A bug fix without a reproduction test is not complete.
 
 **Record Evidence:** For each task, note:
 - `task_id` — the task completed
@@ -174,12 +186,23 @@ For each task in `execution_order`, follow the increment cycle:
 - `verification_notes` — how acceptance criteria were checked
 
 Build rules (from the recipe):
-- **Rule 0:** One task at a time — no multi-task changes
-- **Rule 1:** The plan is the contract — no silent scope expansion
-- **Rule 2:** Tests travel with the code
-- **Rule 3:** Never commit broken tests
-- **Rule 4:** Evidence is not optional
-- **Rule 5:** Commit SHAs are the audit trail
+- **Rule 0: Simplicity first** — after implementing, ask: "Could this be fewer lines? Am I building for hypothetical future requirements?" Write the naive, obviously-correct version first.
+- **Rule 0.5: Scope discipline** — touch only `task.target_files`. If you notice something worth improving outside scope, note it — don't fix it.
+- **Rule 1: The plan is the contract** — no silent scope expansion
+- **Rule 2: Tests travel with the code** — unit tests for logic, integration tests for API/DB boundaries, E2E tests only for critical user flows. Aim for ~80% unit / ~15% integration / ~5% E2E.
+- **Rule 3: Never commit broken tests**
+- **Rule 4: Evidence is not optional**
+- **Rule 5: Commit SHAs are the audit trail** — each commit should be independently revertable (additive changes before deletions; avoid mixing logic change + format change in one commit)
+- **Rule 6: Safe defaults** — new code defaults to conservative behavior (disabled flags, allowlists not blocklists, strict validation). Especially in tier 3 runs.
+- **Rule 7: Feature flags for incomplete slices** — if a task lands user-reachable but incomplete behavior, gate it behind a feature flag so the commit is safe to merge.
+- **Rule 8: 100-line limit** — if you are about to write more than ~100 lines without running a test, stop and run the tests first.
+
+**Regression self-check (every 3 tasks):** After completing every third task (task-03, task-06, task-09, ...), before continuing:
+1. Run the **full test suite** (not just the current task's tests).
+2. Confirm all previously-completed tasks' acceptance criteria still pass.
+3. Confirm the build is clean.
+
+If anything fails, fix it before continuing. This catches regressions while context is fresh, rather than at the final build gate.
 
 After all tasks, display:
 
