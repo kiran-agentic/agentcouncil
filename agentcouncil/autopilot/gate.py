@@ -178,7 +178,7 @@ class GateExecutor:
                 await session.close()
 
         result = self._run_in_loop(_execute())
-        session_id = getattr(result, "session_id", "review-loop-gate")
+        session_id = getattr(provider, "_session_id", None) or "review-loop-gate"
 
         decision = self._normalizer.normalize("review_loop", result, session_id)
         return decision, result
@@ -214,7 +214,7 @@ class GateExecutor:
         result = self._run_in_loop(_execute())
         # challenge returns DeliberationResult[ChallengeArtifact]
         raw_artifact = result.artifact if hasattr(result, "artifact") else result
-        session_id = getattr(result, "session_id", "challenge-gate")
+        session_id = getattr(provider, "_session_id", None) or "challenge-gate"
 
         decision = self._normalizer.normalize("challenge", raw_artifact, session_id)
         return decision, raw_artifact
@@ -247,7 +247,7 @@ class GateExecutor:
 
         result = self._run_in_loop(_execute())
         raw_artifact = result.artifact if hasattr(result, "artifact") else result
-        session_id = getattr(result, "session_id", "review-gate")
+        session_id = getattr(provider, "_session_id", None) or "review-gate"
 
         decision = self._normalizer.normalize("review", raw_artifact, session_id)
         return decision, raw_artifact
@@ -281,7 +281,7 @@ class GateExecutor:
         result = self._run_in_loop(_execute())
         # brainstorm returns BrainstormResult with .artifact (ConsensusArtifact)
         raw_artifact = result.artifact if hasattr(result, "artifact") else result
-        session_id = getattr(result, "session_id", "brainstorm-gate")
+        session_id = getattr(provider, "_session_id", None) or "brainstorm-gate"
 
         decision = self._normalizer.normalize("brainstorm", raw_artifact, session_id)
         return decision, raw_artifact
@@ -319,7 +319,7 @@ class GateExecutor:
 
         result = self._run_in_loop(_execute())
         raw_artifact = result.artifact if hasattr(result, "artifact") else result
-        session_id = getattr(result, "session_id", "decide-gate")
+        session_id = getattr(provider, "_session_id", None) or "decide-gate"
 
         decision = self._normalizer.normalize("decide", raw_artifact, session_id)
         return decision, raw_artifact
