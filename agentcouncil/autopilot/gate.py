@@ -125,16 +125,16 @@ class GateExecutor:
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=self._backend)
         outside = OutsideSessionAdapter(session)
-        lead = ClaudeAdapter(model="opus", timeout=300)
+        lead = ClaudeAdapter(model="opus", timeout=900)
 
         return provider, session, outside, lead
 
-    def _run_in_loop(self, coro: Any, timeout: float = 300) -> Any:
+    def _run_in_loop(self, coro: Any, timeout: float = 900) -> Any:
         """Run an async coroutine synchronously with timeout.
 
         Args:
             coro: Async coroutine to execute.
-            timeout: Maximum seconds to wait (default 300s / 5 minutes).
+            timeout: Maximum seconds to wait (default 900s / 15 minutes).
 
         Raises:
             TimeoutError: If the protocol doesn't complete within timeout.

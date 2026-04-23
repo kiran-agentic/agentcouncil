@@ -595,14 +595,14 @@ async def brainstorm_tool(
 
     await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     # BP-01: Multi-agent Blind Panel mode
     if backends and len(backends) > 1:
         from agentcouncil.deliberation import brainstorm_panel
         # Build brief first
         if code_context is not None:
-            brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+            brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
             builder = BriefBuilder(adapter=brief_adapter)
             excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
             brief = builder.build(context, code_context=excerpts)
@@ -621,7 +621,7 @@ async def brainstorm_tool(
                 outside_adapters.append(OutsideSessionAdapter(session))
                 sessions_to_close.append((provider, session))
 
-            synthesizer = ClaudeAdapter(model="opus", timeout=300)
+            synthesizer = ClaudeAdapter(model="opus", timeout=900)
             result = await brainstorm_panel(
                 brief=brief,
                 outside_adapters=outside_adapters,
@@ -639,7 +639,7 @@ async def brainstorm_tool(
 
     if code_context is not None:
         # Complex context with code — use BriefBuilder to extract structure.
-        brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+        brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
         builder = BriefBuilder(adapter=brief_adapter)
         excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
         brief = builder.build(context, code_context=excerpts)
@@ -698,7 +698,7 @@ async def brainstorm_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await brainstorm(
             brief=brief,
@@ -804,7 +804,7 @@ async def review_tool(
         _gate_model = None
     check_certification_gate("review", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     review_input = ReviewInput(
         artifact=artifact,
@@ -845,7 +845,7 @@ async def review_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await review(review_input, outside, lead, checkpoint_callback=_checkpoint_cb)
         result.transcript.meta = meta
@@ -896,7 +896,7 @@ async def decide_tool(
     _t0 = _time.time()
 
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     decide_options = [DecideOption(**opt) for opt in options]
     decide_input = DecideInput(
@@ -938,7 +938,7 @@ async def decide_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await decide(decide_input, outside, lead)
         result.transcript.meta = meta
@@ -1000,7 +1000,7 @@ async def challenge_tool(
         _gate_model = None
     check_certification_gate("challenge", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     challenge_input = ChallengeInput(
         artifact=artifact,
@@ -1041,7 +1041,7 @@ async def challenge_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await challenge(challenge_input, outside, lead)
         result.transcript.meta = meta
@@ -1095,7 +1095,7 @@ async def outside_query_tool(
         return response + deprecation_notice
     except ValueError:
         # Legacy backend (unrecognised string) — fall back to adapter path
-        adapter = resolve_outside_adapter(outside_agent, timeout=300)
+        adapter = resolve_outside_adapter(outside_agent, timeout=900)
         return adapter.call(prompt) + deprecation_notice
 
 
@@ -1226,7 +1226,7 @@ async def protocol_resume_tool(
     """
     from agentcouncil.workflow import resume_protocol
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     try:
         provider = _make_provider(profile=profile, model=model)
@@ -1241,7 +1241,7 @@ async def protocol_resume_tool(
             await session.close()
     except ValueError:
         backend_str = resolve_outside_backend(profile)
-        outside = resolve_outside_adapter(profile, timeout=300)
+        outside = resolve_outside_adapter(profile, timeout=900)
         result = await resume_protocol(session_id, outside, lead)
 
     return result.model_dump()
@@ -1284,7 +1284,7 @@ async def review_loop_tool(
     await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     from agentcouncil.convergence import review_loop
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     try:
         provider = _make_provider(profile=backend)
@@ -1313,7 +1313,7 @@ async def review_loop_tool(
             await session.close()
     except ValueError as exc:
         log.warning("review_loop: _make_provider failed (%s), falling back to legacy adapter", exc)
-        outside = resolve_outside_adapter(backend, timeout=300)
+        outside = resolve_outside_adapter(backend, timeout=900)
         result = await review_loop(
             artifact=artifact,
             artifact_type=artifact_type,

@@ -682,9 +682,10 @@ class LinearOrchestrator:
                 self._last_raw_artifact = raw
                 return decision
             except Exception:
-                # Gate executor failed (e.g., no backend available) —
-                # fall through to stub gates
-                pass
+                # Gate executor failed — propagate so the caller
+                # (_run_gate_with_retry) can handle retries and
+                # transition the run to paused_for_approval.
+                raise
 
         # Priority 3: Fall back to stub protocol artifact + normalizer
         if gate_type == "review_loop" and ConvergenceResult is not None:

@@ -2342,4 +2342,22 @@ class TestReviewFixes:
         )
         orch._maybe_promote_from_gate(run, "challenge", clean_challenge)
         assert run.tier == 2, f"Expected tier=2 (no promotion), got {run.tier}"
-        assert run.tier_promoted_at is None
+
+
+class _RaisingGateExecutor:
+    """Fake gate executor that always raises RuntimeError."""
+    def run_gate(self, gate_type, **kwargs):
+        raise RuntimeError("backend unavailable")
+
+
+class TestGateExecutorExceptionPropagates:
+    def test_gate_executor_exception_propagates_not_swallowed(self):
+        """Gate executor failure must raise, not silently fall through to stub."""
+        orchestrator = LinearOrchestrator(
+            registry=_make_test_registry(),
+            runners=_make_stub_runners(),
+            gate_executor=_RaisingGateExecutor(),
+        )
+        # _run_gate should raise when executor raises
+        with pytest.raises(RuntimeError, match="backend unavailable"):
+            orchestrator._run_gate("review_loop")

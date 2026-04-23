@@ -67,7 +67,7 @@ class AgentAdapter(abc.ABC):
 class CodexAdapter(AgentAdapter):
     """Invokes the local `codex exec` CLI to produce a response."""
 
-    def __init__(self, model: str | None = None, timeout: int = 120, cwd: str | None = None) -> None:
+    def __init__(self, model: str | None = None, timeout: int = 900, cwd: str | None = None) -> None:
         if not shutil.which("codex"):
             raise EnvironmentError("codex CLI not found on PATH")
         self._model = model
@@ -122,7 +122,7 @@ class CodexAdapter(AgentAdapter):
 class ClaudeAdapter(AgentAdapter):
     """Invokes the local `claude` CLI as a subprocess, passing the prompt via stdin."""
 
-    def __init__(self, model: str | None = None, timeout: int = 120, cwd: str | None = None) -> None:
+    def __init__(self, model: str | None = None, timeout: int = 900, cwd: str | None = None) -> None:
         if not shutil.which("claude"):
             raise EnvironmentError("claude CLI not found on PATH")
         self._model = model
@@ -213,7 +213,7 @@ def resolve_outside_backend(backend: str | None = None) -> str:
 
 def resolve_outside_adapter(
     backend: str | None = None,
-    timeout: int = 300,
+    timeout: int = 900,
     model: str | None = None,
 ) -> AgentAdapter:
     """Create an outside adapter for sync protocols (brainstorm).
@@ -244,7 +244,7 @@ class CodexSession:
         self,
         model: str | None = None,
         sandbox: str = "read-only",
-        timeout: int = 300,
+        timeout: int = 900,
         cwd: str | None = None,
     ) -> None:
         self._model = model

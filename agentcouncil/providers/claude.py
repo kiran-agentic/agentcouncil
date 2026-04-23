@@ -37,7 +37,7 @@ __all__ = ["ClaudeProvider"]
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT = 300.0  # seconds
+_DEFAULT_TIMEOUT = 900.0  # seconds
 
 
 class ClaudeProvider(OutsideProvider):
@@ -45,7 +45,7 @@ class ClaudeProvider(OutsideProvider):
 
     Args:
         model      -- Model to use (e.g. "sonnet", "opus"). None uses CLI default.
-        timeout    -- Seconds to wait for the subprocess to complete (default: 300).
+        timeout    -- Seconds to wait for the subprocess to complete (default: 900).
         session_id -- Explicit session ID string. If None, a UUID is generated at
                       init time and reused across all chat_complete calls (UPROV-02).
 

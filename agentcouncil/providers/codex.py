@@ -33,7 +33,7 @@ class CodexProvider(OutsideProvider):
     Args:
         model   -- Codex model name (e.g., "o4-mini"). None uses the Codex default.
         sandbox -- Codex sandbox mode (default: "read-only").
-        timeout -- Seconds to wait per MCP call (default: 300).
+        timeout -- Seconds to wait per MCP call (default: 900).
         cwd     -- Working directory for the codex mcp-server subprocess.
                    Defaults to the current working directory at call time.
 
@@ -58,7 +58,7 @@ class CodexProvider(OutsideProvider):
         self,
         model: str | None = None,
         sandbox: str = "read-only",
-        timeout: int = 300,
+        timeout: int = 900,
         cwd: str | None = None,
     ) -> None:
         self._model = model
