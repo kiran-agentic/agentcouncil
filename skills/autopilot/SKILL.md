@@ -45,12 +45,16 @@ Note: (a) the test command to use in build steps, (b) the lint/type-check comman
 
 ### Step 1: Understand the intent
 
-Read the user's intent. If it's vague, ask 1-2 clarifying questions. You need enough to build a spec:
-- What is being built/changed?
-- What files are likely affected?
-- What does "done" look like?
+Read the user's intent. Before writing the spec, list the technical assumptions you are making — about the tech stack, framework, auth model, data storage, deployment target, and any conventions you read in Step 0. Present them as:
 
-If the intent is already clear, proceed.
+```
+ASSUMPTIONS:
+1. [assumption]
+2. [assumption]
+→ Correct me now or I'll proceed with these.
+```
+
+If the intent is genuinely vague (target unclear, scope undefined), ask 1-2 clarifying questions in the same message as your assumptions. Batch everything — one message.
 
 ### Step 2: Build the spec
 
@@ -61,11 +65,18 @@ From the intent, construct:
 - **requirements**: List of specific things that must be built/changed
 - **acceptance_criteria**: List of verifiable conditions (e.g., "tests pass", "file contains X")
 - **target_files**: Files likely created or modified (paths with `auth/`, `migrations/`, `infra/`, `deploy/`, `permissions/` trigger tier 3)
+- **testing_strategy**: Test framework (from Step 0), test locations, expected test types for this change (unit/integration/e2e). Example: "pytest, tests/ dir, unit tests for logic, one integration test for the API endpoint."
+- **behavioral_boundaries**:
+  - *Always*: actions you will always take (e.g., "run tests before commit", "validate all user inputs")
+  - *Ask first*: actions that need approval (e.g., "schema changes", "adding new dependencies")
+  - *Never*: prohibited actions (e.g., "modify files outside target_files without documenting", "skip failing tests")
 - **tier**: 1 (low-risk), 2 (standard, default), or 3 (sensitive)
 
 Display the spec, then proceed immediately to validation. Do not wait for user confirmation — autopilot is autonomous.
 
 ### Step 3: Validate and register the run
+
+Write the spec to disk before registering. Create the file `docs/autopilot/specs/{spec_id}.md` with the full spec content formatted as markdown. This persists the spec for future reference independent of this conversation.
 
 Call `mcp__agentcouncil__autopilot_prepare` with all spec fields, plus `escalation_level=ESCALATION_LEVEL`.
 
@@ -81,7 +92,7 @@ Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
 - **artifact**: The full spec text (requirements, acceptance criteria, target files, constraints)
 - **artifact_type**: `"plan"`
 - **review_objective**: `"Review this spec for completeness, feasibility, and risk before planning begins"`
-- **focus_areas**: `["requirements clarity", "acceptance criteria testability", "scope boundaries", "missing edge cases"]`
+- **focus_areas**: `["requirements clarity", "acceptance criteria testability", "testing strategy completeness", "behavioral boundaries defined", "scope boundaries", "missing edge cases"]`
 
 **Handle the gate decision from `final_verdict`:**
 - **`pass`** → proceed to Step 5
