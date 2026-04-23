@@ -325,6 +325,15 @@ Every gate follows the same pattern:
 
 If a gate revision loop exceeds 2 iterations, stop and ask the user — do not loop forever.
 
+**Escalation during the pipeline (consult `ESCALATION_LEVEL`):**
+
+When you encounter an unknown, ambiguity, or unexpected scope question mid-pipeline, apply the level set in Step 0:
+- **`minimal`**: proceed with best judgment and document your assumption inline ("Assuming X — override this by running the command again with Y"). Escalate only for: security risks, potential data loss, or scope changes that could be destructive.
+- **`normal`**: escalate if the wrong assumption would require significant rework of the spec or plan. Proceed autonomously for low-consequence choices (variable names, minor implementation details, stylistic decisions).
+- **`verbose`**: escalate for any uncertain choice. Ask before proceeding.
+
+Critical blockers (security risk, data loss potential, contradictory requirements) always escalate regardless of level.
+
 ## Rules
 
 - Display the spec before calling `autopilot_prepare` — but do not wait for confirmation, proceed autonomously
