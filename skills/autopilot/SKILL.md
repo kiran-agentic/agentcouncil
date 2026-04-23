@@ -18,6 +18,31 @@ spec_prep → REVIEW_LOOP → plan → REVIEW_LOOP → build → REVIEW_LOOP →
 
 ## Protocol — follow these steps exactly
 
+### Step 0: Set escalation level and read existing conventions
+
+Send the user **one message** containing both of the following. Do not proceed until you have the answer to item (1).
+
+**1. Escalation level** — ask:
+
+> "How should I handle unknowns during this run?
+> - **`minimal`**: interrupt only for critical blockers — security risks, potential data loss, or scope changes that could be destructive
+> - **`normal`** (default): interrupt when the wrong assumption would require significant rework of the spec or plan
+> - **`verbose`**: ask about anything uncertain before proceeding
+>
+> Reply with `minimal`, `normal`, or `verbose` (or just press Enter for `normal`)."
+
+Record the answer as `ESCALATION_LEVEL`. Default to `normal` if the user presses Enter or gives no answer.
+
+**2. Read existing project conventions** — before writing the spec, read these files if they exist (they bound your spec and test strategy):
+- `pyproject.toml` — test runner (`[tool.pytest.ini_options]`), lint config (`[tool.ruff]` or `[tool.mypy]`), build commands
+- `pytest.ini` or `setup.cfg` — alternate pytest config
+- `.ruff.toml` — alternate ruff config
+- `Makefile` — `test`, `lint`, `build` targets
+
+Note: (a) the test command to use in build steps, (b) the lint/type-check command if configured, (c) where tests live.
+
+**Critical unknowns always escalate regardless of `ESCALATION_LEVEL`:** security risks, destructive scope (deleting data, breaking APIs), or requirements that contradict each other. For all other unknowns, apply the level the user set.
+
 ### Step 1: Understand the intent
 
 Read the user's intent. If it's vague, ask 1-2 clarifying questions. You need enough to build a spec:
@@ -42,7 +67,7 @@ Display the spec, then proceed immediately to validation. Do not wait for user c
 
 ### Step 3: Validate and register the run
 
-Call `mcp__agentcouncil__autopilot_prepare` with all spec fields.
+Call `mcp__agentcouncil__autopilot_prepare` with all spec fields, plus `escalation_level=ESCALATION_LEVEL`.
 
 Save the returned `run_id` and `tier`. Display:
 ```
