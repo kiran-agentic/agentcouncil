@@ -103,6 +103,8 @@ Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
 
 Read `agentcouncil/autopilot/workflows/plan/workflow.md` — this is the execution recipe.
 
+**Read-only mode:** Do not write or modify any code during this step. The output is a plan document, not implementation.
+
 Follow the 5-step planning process:
 
 1. **Parse the spec completely** — all requirements, acceptance criteria, non-goals, research findings. Do not decompose until fully internalized.
@@ -118,15 +120,20 @@ Display the plan:
 
 **Verification Strategy:** {narrative}
 
-| Task ID | Title | Complexity | Depends On | Target Files |
-|---------|-------|------------|------------|--------------|
-| task-01 | ...   | small      | —          | ...          |
+| Task ID | Title | Complexity | Depends On | Target Files | Verification |
+|---------|-------|------------|------------|--------------|--------------|
+| task-01 | ...   | small      | —          | ...          | `pytest tests/path/test_foo.py` passes |
 
 | Probe ID | Criterion | Level | Mock Policy | Expected Observation |
 |----------|-----------|-------|-------------|----------------------|
 | probe-01 | ac-0: ... | unit  | forbidden   | ...                  |
 
 **Execution Order:** task-01, task-02, ...
+
+**Risks and Mitigations:**
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| [risk from spec gate findings] | high/medium/low | [what you'll do if it materialises] |
 ```
 
 ### Step 6: Gate — review the plan (MANDATORY)
