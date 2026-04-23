@@ -352,6 +352,41 @@ class TestStageCheckpointFields:
 # ---------------------------------------------------------------------------
 
 
+def test_autopilot_run_escalation_level_defaults_to_normal():
+    """AutopilotRun must have escalation_level defaulting to 'normal'."""
+    import time as _time
+    import uuid
+    run = AutopilotRun(
+        run_id=f"run-{uuid.uuid4().hex[:12]}",
+        spec_id="test-spec",
+        status="running",
+        current_stage="spec_prep",
+        tier=2,
+        stages=[StageCheckpoint(stage_name="spec_prep", status="pending")],
+        started_at=_time.time(),
+        updated_at=_time.time(),
+    )
+    assert run.escalation_level == "normal"
+
+
+def test_autopilot_run_escalation_level_accepts_minimal():
+    """AutopilotRun must accept escalation_level='minimal'."""
+    import time as _time
+    import uuid
+    run = AutopilotRun(
+        run_id=f"run-{uuid.uuid4().hex[:12]}",
+        spec_id="test-spec",
+        status="running",
+        current_stage="spec_prep",
+        tier=2,
+        stages=[StageCheckpoint(stage_name="spec_prep", status="pending")],
+        started_at=_time.time(),
+        updated_at=_time.time(),
+        escalation_level="minimal",
+    )
+    assert run.escalation_level == "minimal"
+
+
 @pytest.fixture
 def run_dir(tmp_path, monkeypatch):
     import agentcouncil.autopilot.run as rmod

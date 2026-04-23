@@ -1390,7 +1390,8 @@ def journal_get_tool(session_id: str) -> dict:
 @mcp.tool(name="autopilot_prepare")
 def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
                             requirements: list[str], acceptance_criteria: list[str],
-                            tier: int = 2, target_files: list[str] | None = None) -> dict:
+                            tier: int = 2, target_files: list[str] | None = None,
+                            escalation_level: str = "normal") -> dict:
     """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
 
     Call this before autopilot_start. Returns a run_id to use with other tools.
@@ -1422,6 +1423,7 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         tier_classification_reason=tier_reason,
         spec_target_files=target_files,
         stages=stages,
+        escalation_level=escalation_level,
         started_at=_time.time(), updated_at=_time.time(),
     )
     persist(run)
