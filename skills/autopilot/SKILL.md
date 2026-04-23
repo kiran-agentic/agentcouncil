@@ -256,6 +256,17 @@ Overall: passed/failed
 
 If any probes fail with `retry_recommendation = retry_build`, go back to Step 7 with revision guidance (max 2 retries).
 
+**Bug-fix runs — reproduction test check:** If this run's intent was a bug fix, verify:
+- A reproduction test exists in the diff that was specifically written to fail before the fix.
+- That test passes now.
+
+If no reproduction test exists, do not mark verify as complete. Return to the build step and add it.
+
+**Lint and type-check (if configured):** If Step 0 detected a lint or type-check command in the project:
+- Run it now and confirm it passes.
+- Record the result in the verification output.
+- If it fails, fix the issues before the verify step completes.
+
 ### Step 10: Gate — challenge (conditional)
 
 **Only run this gate if tier >= 3 OR target_files touch sensitive paths (auth/, migrations/, infra/, deploy/, permissions/).**
