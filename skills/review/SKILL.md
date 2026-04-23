@@ -146,10 +146,10 @@ You orchestrate the loop in this session. YOU are the lead — you edit the file
 
 **Verification pass (iteration 2+):**
 1. Call `outside_reply` with this prompt:
-   > I've applied fixes to the artifact. Re-read the files (paths unchanged) and return JSON with: `finding_updates` (array of `{id, status, reviewer_notes}` for EVERY prior finding, where status ∈ `fixed|still_open|reopened`), `new_findings` (array of any NEW issues introduced by the changes, same schema as iteration 1), `verdict` (pass/revise/escalate). My change summary: <paste your change summary here>.
+   > I've applied fixes to the artifact. Re-read the files (paths unchanged) and return JSON with: `finding_updates` (array of `{id, status, reviewer_notes}` for EVERY prior finding, where status ∈ `fixed|open|reopened`), `new_findings` (array of any NEW issues introduced by the changes, same schema as iteration 1), `verdict` (pass/revise/escalate). My change summary: <paste your change summary here>.
 2. Parse the response. Merge:
    - `status=fixed` in iteration 2 → if it remains absent in iteration 3, promote to `verified`. Otherwise still `fixed`.
-   - `status=still_open` → remains `open`.
+   - `status=open` → remains `open`.
    - `status=reopened` → was previously `fixed`/`verified`, now `open` again.
    - `new_findings` → add with new stable IDs (F{n+1}, F{n+2}, ...).
 3. Update the running ConvergenceResult you'll present at the end.
