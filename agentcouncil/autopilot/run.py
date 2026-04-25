@@ -292,11 +292,17 @@ def load_run(run_id: str) -> AutopilotRun:
 
 
 _GATED_STEP_REQUIREMENTS: dict[str, tuple[str, str]] = {
+    "spec_review_passed": ("awaiting_spec_review", "Cannot record spec review pass before the spec review gate is pending."),
+    "awaiting_plan_review": ("spec_review_passed", "Cannot request plan review before the spec review gate passes."),
+    "plan_review_passed": ("awaiting_plan_review", "Cannot record plan review pass before the plan review gate is pending."),
     "planning": ("spec_review_passed", "Cannot plan before the spec review gate passes."),
     "building": ("plan_review_passed", "Cannot build before the plan review gate passes."),
     "build_complete": ("plan_review_passed", "Cannot complete build before the plan review gate passes."),
+    "build_review_passed": ("build_complete", "Cannot record build review pass before the build is complete."),
     "verifying": ("build_review_passed", "Cannot verify before the build review gate passes."),
     "verify_complete": ("build_review_passed", "Cannot complete verify before the build review gate passes."),
+    "challenge_passed": ("verify_complete", "Cannot record challenge pass before verification completes."),
+    "challenge_skipped": ("verify_complete", "Cannot skip challenge before verification completes."),
     "awaiting_ship": ("verify_complete", "Cannot ship before verification completes."),
     "shipping": ("verify_complete", "Cannot ship before verification completes."),
     "ship_complete": ("verify_complete", "Cannot complete ship before verification completes."),
@@ -321,6 +327,12 @@ def validate_protocol_checkpoint(run: AutopilotRun, next_protocol_step: str) -> 
         required_step, message = requirement
         if required_step not in history:
             raise ValueError(f"{message} Required checkpoint: {required_step!r}.")
+    if next_protocol_step in {"shipping", "ship_complete"} and run.tier >= 3:
+        if "challenge_passed" not in history:
+            raise ValueError(
+                "Cannot ship a tier 3 autopilot run before the challenge gate passes. "
+                "Required checkpoint: 'challenge_passed'."
+            )
 
 
 def checkpoint_run(

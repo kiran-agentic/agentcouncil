@@ -435,6 +435,9 @@ def test_checkpoint_refuses_verify_before_build_review(run_dir):
     run = _make_run(run_id="skip-build-review")
     persist(run)
 
+    checkpoint_run("skip-build-review", protocol_step="awaiting_spec_review")
+    checkpoint_run("skip-build-review", protocol_step="spec_review_passed")
+    checkpoint_run("skip-build-review", protocol_step="awaiting_plan_review")
     checkpoint_run(
         "skip-build-review",
         protocol_step="plan_review_passed",
@@ -464,6 +467,9 @@ def test_checkpoint_allows_verify_after_build_review(run_dir):
     run = _make_run(run_id="build-review-passed")
     persist(run)
 
+    checkpoint_run("build-review-passed", protocol_step="awaiting_spec_review")
+    checkpoint_run("build-review-passed", protocol_step="spec_review_passed")
+    checkpoint_run("build-review-passed", protocol_step="awaiting_plan_review")
     checkpoint_run("build-review-passed", protocol_step="plan_review_passed")
     checkpoint_run("build-review-passed", protocol_step="build_complete")
     updated = checkpoint_run(
@@ -482,6 +488,52 @@ def test_checkpoint_allows_verify_after_build_review(run_dir):
         stage_status="in_progress",
     )
     assert updated.current_stage == "verify"
+
+
+def test_checkpoint_refuses_tier3_ship_before_challenge(run_dir):
+    """Tier 3 runs must pass challenge before ship can complete."""
+    run = _make_run(run_id="tier3-no-challenge", tier=3)
+    persist(run)
+
+    checkpoint_run("tier3-no-challenge", protocol_step="awaiting_spec_review")
+    checkpoint_run("tier3-no-challenge", protocol_step="spec_review_passed")
+    checkpoint_run("tier3-no-challenge", protocol_step="awaiting_plan_review")
+    checkpoint_run("tier3-no-challenge", protocol_step="plan_review_passed")
+    checkpoint_run("tier3-no-challenge", protocol_step="build_complete")
+    checkpoint_run("tier3-no-challenge", protocol_step="build_review_passed")
+    checkpoint_run("tier3-no-challenge", protocol_step="verify_complete")
+
+    with pytest.raises(ValueError, match="challenge gate passes"):
+        checkpoint_run(
+            "tier3-no-challenge",
+            protocol_step="ship_complete",
+            stage="ship",
+            stage_status="advanced",
+        )
+
+
+def test_checkpoint_allows_tier3_ship_after_challenge(run_dir):
+    """Tier 3 ship completion is legal once challenge_passed is durable."""
+    run = _make_run(run_id="tier3-challenge", tier=3)
+    persist(run)
+
+    checkpoint_run("tier3-challenge", protocol_step="awaiting_spec_review")
+    checkpoint_run("tier3-challenge", protocol_step="spec_review_passed")
+    checkpoint_run("tier3-challenge", protocol_step="awaiting_plan_review")
+    checkpoint_run("tier3-challenge", protocol_step="plan_review_passed")
+    checkpoint_run("tier3-challenge", protocol_step="build_complete")
+    checkpoint_run("tier3-challenge", protocol_step="build_review_passed")
+    checkpoint_run("tier3-challenge", protocol_step="verify_complete")
+    checkpoint_run("tier3-challenge", protocol_step="challenge_passed")
+    updated = checkpoint_run(
+        "tier3-challenge",
+        protocol_step="ship_complete",
+        stage="ship",
+        stage_status="advanced",
+    )
+
+    assert updated.status == "completed"
+    assert updated.completed_at is not None
 
 
 @pytest.fixture
