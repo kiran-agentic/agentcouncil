@@ -19,6 +19,7 @@ from agentcouncil.autopilot.run import (
     AutopilotRun,
     AutopilotRunStatus,
     StageCheckpoint,
+    checkpoint_run,
     load_run,
     persist,
     resume,
@@ -385,6 +386,102 @@ def test_autopilot_run_escalation_level_accepts_minimal():
         escalation_level="minimal",
     )
     assert run.escalation_level == "minimal"
+
+
+def test_autopilot_run_protocol_guard_defaults():
+    """New durable protocol fields must default safely for old run JSON."""
+    run = _make_run()
+    assert run.schema_version == "1.1"
+    assert run.execution_mode == "runner"
+    assert run.protocol_step == "spec_prep_started"
+    assert run.next_required_action is None
+    assert run.required_tool is None
+    assert run.artifact_refs == {}
+    assert run.checkpoint_log == []
+
+
+def test_checkpoint_writes_project_local_state(run_dir, tmp_path):
+    """checkpoint_run mirrors active state into docs/autopilot for resume guards."""
+    run = _make_run(run_id="checkpoint-run")
+    persist(run)
+
+    updated = checkpoint_run(
+        "checkpoint-run",
+        protocol_step="awaiting_spec_review",
+        next_required_action="Run the spec review gate.",
+        required_tool="review_loop",
+        artifact_refs={"spec": "docs/autopilot/specs/test-spec.md"},
+        stage="spec_prep",
+        stage_status="gated",
+        workspace_path=tmp_path,
+    )
+
+    active = tmp_path / "docs/autopilot/active-run.json"
+    state = tmp_path / "docs/autopilot/runs/checkpoint-run/state.json"
+    assert active.exists()
+    assert state.exists()
+    assert updated.active_state_path == str(state)
+
+    active_data = json.loads(active.read_text())
+    state_data = json.loads(state.read_text())
+    assert active_data["run_id"] == "checkpoint-run"
+    assert active_data["required_tool"] == "review_loop"
+    assert state_data["protocol_step"] == "awaiting_spec_review"
+    assert state_data["artifact_refs"]["spec"] == "docs/autopilot/specs/test-spec.md"
+
+
+def test_checkpoint_refuses_verify_before_build_review(run_dir):
+    """A manual run cannot advance build_complete -> verifying without review_loop pass."""
+    run = _make_run(run_id="skip-build-review")
+    persist(run)
+
+    checkpoint_run(
+        "skip-build-review",
+        protocol_step="plan_review_passed",
+        stage="plan",
+        stage_status="advanced",
+    )
+    checkpoint_run(
+        "skip-build-review",
+        protocol_step="build_complete",
+        next_required_action="Run build review.",
+        required_tool="review_loop",
+        stage="build",
+        stage_status="gated",
+    )
+
+    with pytest.raises(ValueError, match="Cannot verify before the build review gate passes"):
+        checkpoint_run(
+            "skip-build-review",
+            protocol_step="verifying",
+            stage="verify",
+            stage_status="in_progress",
+        )
+
+
+def test_checkpoint_allows_verify_after_build_review(run_dir):
+    """The same transition is valid once the build review gate is recorded."""
+    run = _make_run(run_id="build-review-passed")
+    persist(run)
+
+    checkpoint_run("build-review-passed", protocol_step="plan_review_passed")
+    checkpoint_run("build-review-passed", protocol_step="build_complete")
+    updated = checkpoint_run(
+        "build-review-passed",
+        protocol_step="build_review_passed",
+        stage="build",
+        stage_status="advanced",
+        gate_decision="pass",
+    )
+    assert updated.protocol_step == "build_review_passed"
+
+    updated = checkpoint_run(
+        "build-review-passed",
+        protocol_step="verifying",
+        stage="verify",
+        stage_status="in_progress",
+    )
+    assert updated.current_stage == "verify"
 
 
 @pytest.fixture

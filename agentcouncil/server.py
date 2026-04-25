@@ -39,7 +39,16 @@ from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.session import OutsideSession
 from agentcouncil.schemas import JournalEntry
 from agentcouncil.autopilot.orchestrator import LinearOrchestrator
-from agentcouncil.autopilot.run import AutopilotRun, StageCheckpoint, persist, load_run, resume, validate_transition
+from agentcouncil.autopilot.run import (
+    AutopilotRun,
+    StageCheckpoint,
+    build_resume_prompt,
+    checkpoint_run,
+    load_run,
+    persist,
+    resume,
+    validate_transition,
+)
 from agentcouncil.autopilot.loader import load_default_registry
 from agentcouncil.autopilot.artifacts import SpecArtifact
 from agentcouncil.autopilot.prep import run_spec_prep
@@ -185,6 +194,29 @@ async def _resolve_workspace(ctx=None) -> str:
     # 4. Last resort
     _resolved_workspace = str(Path.cwd())
     log.warning("Workspace using Path.cwd() fallback (may be wrong): %s", _resolved_workspace)
+    _sync_project_dir()
+    return _resolved_workspace
+
+
+def _resolve_workspace_sync() -> str:
+    """Best-effort project workspace resolution for synchronous MCP tools."""
+    global _resolved_workspace
+    if _resolved_workspace is not None:
+        return _resolved_workspace
+
+    env_cwd = os.environ.get("AGENTCOUNCIL_CWD")
+    if env_cwd and _is_plausible_project_dir(env_cwd):
+        _resolved_workspace = env_cwd
+        _sync_project_dir()
+        return _resolved_workspace
+
+    parent_cwd = _parent_process_cwd()
+    if parent_cwd and _is_plausible_project_dir(parent_cwd):
+        _resolved_workspace = parent_cwd
+        _sync_project_dir()
+        return _resolved_workspace
+
+    _resolved_workspace = str(Path.cwd())
     _sync_project_dir()
     return _resolved_workspace
 
@@ -1560,12 +1592,17 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
     run = AutopilotRun(
         run_id=run_id, spec_id=spec_id, status="running",
         current_stage="spec_prep", tier=computed_tier,
+        execution_mode="skill",
+        protocol_step="spec_prep_started",
+        next_required_action="Write docs/autopilot/active-run.json via autopilot_checkpoint, then run the spec review gate.",
+        required_tool="autopilot_checkpoint",
         tier_classification_reason=tier_reason,
         spec_target_files=target_files,
         stages=stages,
         escalation_level=escalation_level,
         started_at=_time.time(), updated_at=_time.time(),
     )
+    run.resume_prompt = build_resume_prompt(run)
     persist(run)
     return {
         "run_id": run.run_id,
@@ -1573,6 +1610,10 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         "current_stage": run.current_stage,
         "tier": run.tier,
         "tier_classification_reason": run.tier_classification_reason,
+        "protocol_step": run.protocol_step,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "resume_prompt": run.resume_prompt,
     }
 
 
@@ -1633,9 +1674,76 @@ def autopilot_status_tool(run_id: str) -> dict:
     return {
         "run_id": run.run_id, "status": run.status,
         "current_stage": run.current_stage, "tier": run.tier,
+        "execution_mode": run.execution_mode,
+        "protocol_step": run.protocol_step,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "blocking_reason": run.blocking_reason,
+        "resume_prompt": run.resume_prompt or build_resume_prompt(run),
+        "artifact_refs": run.artifact_refs,
+        "workspace_path": run.workspace_path,
+        "active_state_path": run.active_state_path,
         "stages": [{"stage": s.stage_name, "status": s.status,
                      "gate_decision": s.gate_decision} for s in run.stages],
         "failure_reason": run.failure_reason,
+    }
+
+
+@mcp.tool(name="autopilot_checkpoint")
+def autopilot_checkpoint_tool(
+    run_id: str,
+    protocol_step: str,
+    next_required_action: str | None = None,
+    required_tool: str | None = None,
+    blocking_reason: str | None = None,
+    artifact_refs: dict[str, str] | None = None,
+    stage: str | None = None,
+    stage_status: str | None = None,
+    gate_decision: str | None = None,
+    revision_guidance: str | None = None,
+    note: str | None = None,
+    workspace_path: str | None = None,
+) -> dict:
+    """Record durable `/autopilot` protocol progress.
+
+    This is the manual skill-path checkpoint tool. It keeps the global run file
+    in sync and writes a project-local guard at docs/autopilot/active-run.json
+    plus docs/autopilot/runs/{run_id}/state.json so resumed agents know the
+    next mandatory gate or stage.
+    """
+    allowed_stage_status = {None, "pending", "in_progress", "gated", "advanced", "blocked", "skipped"}
+    if stage_status not in allowed_stage_status:
+        raise ValueError(
+            f"invalid stage_status: {stage_status!r}; expected one of "
+            f"{sorted(s for s in allowed_stage_status if s is not None)}"
+        )
+    workspace = workspace_path or _resolve_workspace_sync()
+    run = checkpoint_run(
+        run_id,
+        protocol_step=protocol_step,
+        next_required_action=next_required_action,
+        required_tool=required_tool,
+        blocking_reason=blocking_reason,
+        artifact_refs=artifact_refs,
+        stage=stage,
+        stage_status=stage_status,  # type: ignore[arg-type]
+        gate_decision=gate_decision,
+        revision_guidance=revision_guidance,
+        note=note,
+        workspace_path=workspace,
+        execution_mode="skill",
+    )
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "current_stage": run.current_stage,
+        "protocol_step": run.protocol_step,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "blocking_reason": run.blocking_reason,
+        "resume_prompt": run.resume_prompt,
+        "artifact_refs": run.artifact_refs,
+        "active_state_path": run.active_state_path,
     }
 
 

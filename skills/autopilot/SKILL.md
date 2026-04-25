@@ -1,7 +1,7 @@
 ---
 name: autopilot
 description: Council-governed autonomous delivery. Claude follows workflow recipes to plan and build; independent agents review at every stage transition. The full pipeline — spec, plan, build, verify, ship — with review loops and conditional challenge gates.
-allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
+allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_checkpoint mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
 argument-hint: [what to build — describe the feature, fix, or change]
 ---
 
@@ -17,6 +17,19 @@ spec_prep → REVIEW_LOOP → plan → REVIEW_LOOP → build → REVIEW_LOOP →
 ```
 
 ## Protocol — follow these steps exactly
+
+### Mandatory resume guard: read durable protocol state first
+
+Before Step 0, check for `docs/autopilot/active-run.json`.
+
+If it exists and `active` is not `false`:
+- Read the referenced `state_path`.
+- If it contains `run_id`, call `mcp__agentcouncil__autopilot_status`.
+- Follow `next_required_action` before doing anything else.
+- If `required_tool` is `review_loop` or `challenge`, run that gate now. Do not continue implementation, verification, or shipping first.
+- If `blocking_reason` is present, stop and report the blocker.
+
+This guard is mandatory after context compaction or a resumed Claude Code session. The project-local state is authoritative for the next protocol obligation.
 
 ### Step 0: Set escalation level and read existing conventions
 
@@ -86,6 +99,15 @@ Spec validated. Run: {run_id}
 Tier: {tier} ({reason})
 ```
 
+Immediately call `mcp__agentcouncil__autopilot_checkpoint`:
+- **run_id**: the returned run id
+- **protocol_step**: `"awaiting_spec_review"`
+- **stage**: `"spec_prep"`
+- **stage_status**: `"gated"`
+- **next_required_action**: `"Run the spec review gate before planning."`
+- **required_tool**: `"review_loop"`
+- **artifact_refs**: `{"spec": "docs/autopilot/specs/{spec_id}.md"}`
+
 ### Step 4: Gate — review the spec
 
 Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
@@ -95,9 +117,9 @@ Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
 - **focus_areas**: `["requirements clarity", "acceptance criteria testability", "testing strategy completeness", "behavioral boundaries defined", "scope boundaries", "missing edge cases"]`
 
 **Handle the gate decision from `final_verdict`:**
-- **`pass`** → proceed to Step 5
-- **`revise`** → read the `final_findings`, fix the spec, display changes, and re-run this gate (max 2 revisions, then ask user)
-- **`escalate`** → display findings, stop, and ask the user how to proceed
+- **`pass`** → call `autopilot_checkpoint` with `protocol_step="spec_review_passed"`, `stage="spec_prep"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 5
+- **`revise`** → call `autopilot_checkpoint` with `protocol_step="paused_for_spec_revision"`, `stage="spec_prep"`, `stage_status="blocked"`, `required_tool="review_loop"`, and `revision_guidance`; fix the spec, display changes, and re-run this gate (max 2 revisions, then ask user)
+- **`escalate`** → call `autopilot_checkpoint` with `protocol_step="blocked_on_spec_review"`, `stage="spec_prep"`, `stage_status="blocked"`, `blocking_reason`, then display findings, stop, and ask the user how to proceed
 
 ### Step 5: Plan (follow the plan workflow recipe)
 
@@ -136,6 +158,14 @@ Display the plan:
 | [risk from spec gate findings] | high/medium/low | [what you'll do if it materialises] |
 ```
 
+Call `mcp__agentcouncil__autopilot_checkpoint`:
+- **protocol_step**: `"awaiting_plan_review"`
+- **stage**: `"plan"`
+- **stage_status**: `"gated"`
+- **next_required_action**: `"Run the plan review gate before building."`
+- **required_tool**: `"review_loop"`
+- **artifact_refs**: include the plan document path or `"plan": "displayed-in-conversation"` if no file was written
+
 ### Step 6: Gate — review the plan (MANDATORY)
 
 **DO NOT SKIP THIS STEP.** The plan must be independently reviewed before any code is written. This is a non-negotiable gate.
@@ -147,9 +177,9 @@ Call `mcp__agentcouncil__review_loop`:
 - **focus_areas**: `["task decomposition", "dependency ordering", "acceptance probe coverage", "scope creep"]`
 
 **Handle the gate decision:**
-- **`pass`** → proceed to Step 7 (do NOT ask the user for confirmation — autopilot is autonomous)
-- **`revise`** → read findings, revise the plan, display changes, re-run this gate (max 2 revisions)
-- **`escalate`** → display findings, stop, ask user
+- **`pass`** → call `autopilot_checkpoint` with `protocol_step="plan_review_passed"`, `stage="plan"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 7 (do NOT ask the user for confirmation — autopilot is autonomous)
+- **`revise`** → call `autopilot_checkpoint` with `protocol_step="paused_for_plan_revision"`, `stage="plan"`, `stage_status="blocked"`, `required_tool="review_loop"`, and `revision_guidance`; read findings, revise the plan, display changes, re-run this gate (max 2 revisions)
+- **`escalate`** → call `autopilot_checkpoint` with `protocol_step="blocked_on_plan_review"`, `stage="plan"`, `stage_status="blocked"`, `blocking_reason`; display findings, stop, ask user
 
 **If the review_loop tool fails or is unavailable, STOP and tell the user. Do not proceed to build without a reviewed plan.**
 
@@ -185,6 +215,13 @@ A bug fix without a reproduction test is not complete.
 - `test_results` — test output summary
 - `verification_notes` — how acceptance criteria were checked
 
+After each task's evidence is recorded, call `mcp__agentcouncil__autopilot_checkpoint`:
+- **protocol_step**: `"building"`
+- **stage**: `"build"`
+- **stage_status**: `"in_progress"`
+- **next_required_action**: `"Continue the next incomplete build task, or produce BuildArtifact when all tasks are complete."`
+- **artifact_refs**: include the current evidence location if written, otherwise `{"build_evidence": "tracked-in-conversation"}`
+
 Build rules (from the recipe):
 - **Rule 0: Simplicity first** — after implementing, ask: "Could this be fewer lines? Am I building for hypothetical future requirements?" Write the naive, obviously-correct version first.
 - **Rule 0.5: Scope discipline** — touch only `task.target_files`. If you notice something worth improving outside scope, note it — don't fix it.
@@ -218,6 +255,16 @@ Total files changed: {list}
 Commit SHAs: {list}
 ```
 
+Then produce a formal `BuildArtifact` with `build_id`, `plan_id`, `spec_id`, `evidence`, `all_tests_passing`, `files_changed`, and `commit_shas`.
+
+Call `mcp__agentcouncil__autopilot_checkpoint` before Step 8:
+- **protocol_step**: `"build_complete"`
+- **stage**: `"build"`
+- **stage_status**: `"gated"`
+- **next_required_action**: `"Run the build review gate before verification."`
+- **required_tool**: `"review_loop"`
+- **artifact_refs**: include the BuildArtifact location or `"build_artifact": "displayed-in-conversation"` if no file was written
+
 ### Step 8: Gate — review the build (MANDATORY)
 
 **DO NOT SKIP THIS STEP.** The build must be independently reviewed before verification. This is a non-negotiable gate.
@@ -229,9 +276,9 @@ Call `mcp__agentcouncil__review_loop`:
 - **focus_areas**: `["correctness", "test coverage", "spec compliance", "code quality", "security"]`
 
 **Handle the gate decision:**
-- **`pass`** → proceed to Step 9
-- **`revise`** → read findings, fix the issues (follow the increment cycle for fixes), re-run this gate (max 2 revisions)
-- **`escalate`** → display findings, stop, ask user
+- **`pass`** → call `autopilot_checkpoint` with `protocol_step="build_review_passed"`, `stage="build"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 9
+- **`revise`** → call `autopilot_checkpoint` with `protocol_step="paused_for_build_revision"`, `stage="build"`, `stage_status="blocked"`, `required_tool="review_loop"`, and `revision_guidance`; read findings, fix the issues (follow the increment cycle for fixes), re-run this gate (max 2 revisions)
+- **`escalate`** → call `autopilot_checkpoint` with `protocol_step="blocked_on_build_review"`, `stage="build"`, `stage_status="blocked"`, `blocking_reason`; display findings, stop, ask user
 
 **If the review_loop tool fails or is unavailable, STOP and tell the user. Do not proceed to verify without a reviewed build.**
 
@@ -253,6 +300,11 @@ Display:
 
 Overall: passed/failed
 ```
+
+Call `mcp__agentcouncil__autopilot_checkpoint`:
+- If verification is in progress: `protocol_step="verifying"`, `stage="verify"`, `stage_status="in_progress"`
+- If all probes pass: `protocol_step="verify_complete"`, `stage="verify"`, `stage_status="advanced"`, `next_required_action="Run challenge if required, otherwise ship."`
+- If probes fail: `protocol_step="paused_for_verify_revision"`, `stage="verify"`, `stage_status="blocked"`, `blocking_reason` with failed probes
 
 If any probes fail with `retry_recommendation = retry_build`, go back to Step 7 with revision guidance (max 2 retries).
 
@@ -278,17 +330,19 @@ If the challenge gate should fire, call `mcp__agentcouncil__challenge`:
 - **rounds**: 2
 
 **Handle the gate decision from `artifact.readiness`:**
-- **`ready`** → proceed to Step 11
-- **`needs_hardening`** → read `failure_modes` where `disposition == "must_harden"`, fix the issues, re-run verify (Step 9), then re-run this gate
-- **`not_ready`** → display failure modes, stop, ask user
+- **`ready`** → call `autopilot_checkpoint` with `protocol_step="challenge_passed"`, `stage="verify"`, `gate_decision="ready"`, then proceed to Step 11
+- **`needs_hardening`** → call `autopilot_checkpoint` with `protocol_step="paused_for_challenge_hardening"`, `required_tool="challenge"`, and `revision_guidance`; read `failure_modes` where `disposition == "must_harden"`, fix the issues, re-run verify (Step 9), then re-run this gate
+- **`not_ready`** → call `autopilot_checkpoint` with `protocol_step="blocked_on_challenge"`, `blocking_reason`; display failure modes, stop, ask user
 
-If challenge is skipped (tier < 3, no sensitive paths), proceed directly to Step 11.
+If challenge is skipped (tier < 3, no sensitive paths), call `autopilot_checkpoint` with `protocol_step="challenge_skipped"` and proceed directly to Step 11.
 
 ### Step 11: Ship
 
 Display the final delivery summary:
 
 ```
+
+After displaying the summary, call `mcp__agentcouncil__autopilot_checkpoint` with `protocol_step="ship_complete"`, `stage="ship"`, `stage_status="advanced"`, and `next_required_action=null`. This marks `docs/autopilot/active-run.json` inactive.
 ## Autopilot Complete
 
 **Run:** {run_id}
@@ -341,6 +395,7 @@ Critical blockers (security risk, data loss potential, contradictory requirement
 - Follow the workflow recipes — read `plan/workflow.md` and `build/workflow.md`
 - The plan is your contract — do not silently expand scope during build
 - Evidence is mandatory — every task needs `files_changed`, `test_results`, `verification_notes`
+- Durable state is mandatory — after every major stage and every completed build task, call `autopilot_checkpoint`
 - **Gates are NEVER optional** — every stage transition goes through independent review. Skipping a gate is a protocol violation. If a gate tool is unavailable, STOP — do not proceed without review.
 - On `revise`, fix the specific findings — do not start over from scratch
 - On `escalate`/`not_ready`, stop and involve the user — do not override the gate

@@ -790,7 +790,43 @@ class TestMCPTools:
         status = autopilot_status_tool(run_id=prep["run_id"])
         assert status["run_id"] == prep["run_id"]
         assert status["status"] == "running"
+        assert status["protocol_step"] == "spec_prep_started"
+        assert status["required_tool"] == "autopilot_checkpoint"
+        assert "resume_prompt" in status
         assert len(status["stages"]) == 5
+
+    def test_checkpoint_tool_records_guard_state(self, tmp_path, monkeypatch):
+        """autopilot_checkpoint returns guard payload and writes project-local state."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path / "runs")
+        from agentcouncil.server import (
+            autopilot_checkpoint_tool,
+            autopilot_prepare_tool,
+            autopilot_status_tool,
+        )
+        prep = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"],
+        )
+
+        checkpoint = autopilot_checkpoint_tool(
+            run_id=prep["run_id"],
+            protocol_step="awaiting_build_review",
+            next_required_action="Run the build review gate.",
+            required_tool="review_loop",
+            artifact_refs={"build": "docs/autopilot/runs/build-artifact.json"},
+            stage="build",
+            stage_status="gated",
+            workspace_path=str(tmp_path),
+        )
+
+        assert checkpoint["protocol_step"] == "awaiting_build_review"
+        assert checkpoint["required_tool"] == "review_loop"
+        assert checkpoint["active_state_path"].endswith(f"docs/autopilot/runs/{prep['run_id']}/state.json")
+
+        status = autopilot_status_tool(run_id=prep["run_id"])
+        assert status["next_required_action"] == "Run the build review gate."
+        assert status["artifact_refs"]["build"] == "docs/autopilot/runs/build-artifact.json"
+        assert (tmp_path / "docs/autopilot/active-run.json").exists()
 
     def test_start_completes_run(self, tmp_path, monkeypatch):
         """autopilot_start runs pipeline to completion with real runners."""

@@ -46,6 +46,10 @@ For each task in `execution_order`:
 - `test_results` — test output summary
 - `verification_notes` — how the task's acceptance criteria were checked
 
+**Checkpoint:** After evidence is recorded, call `autopilot_checkpoint` with
+`protocol_step="building"`, `stage="build"`, and `stage_status="in_progress"`.
+This makes the next incomplete task recoverable after context compaction.
+
 ## Slicing Strategies
 
 ### Vertical Slices (Preferred)
@@ -176,9 +180,23 @@ Before marking a task done:
 - [ ] At least one test covers the new behavior (if behavior-changing)
 - [ ] The commit message accurately describes what changed
 - [ ] `BuildEvidence` entry created with `files_changed`, `test_results`, `verification_notes`
+- [ ] `autopilot_checkpoint` called after evidence is recorded
 - [ ] Files touched match `task.target_files` (or deviation is documented)
 - [ ] No debug code, print statements, or TODO comments left in production paths
 - [ ] The change does one thing and does it completely
+
+## Final Build Handoff
+
+After the last task:
+
+- [ ] Produce a valid `BuildArtifact` with non-empty evidence
+- [ ] Confirm `all_tests_passing` is accurate
+- [ ] Record aggregate `files_changed` and `commit_shas`
+- [ ] Call `autopilot_checkpoint` with `protocol_step="build_complete"`, `stage="build"`, `stage_status="gated"`, `required_tool="review_loop"`, and `next_required_action="Run the build review gate before verification."`
+- [ ] Run the build `review_loop` gate before any verify work
+
+Do not start verification until the build review gate has passed and
+`autopilot_checkpoint` has recorded `protocol_step="build_review_passed"`.
 
 ## Common Rationalizations
 
