@@ -112,6 +112,8 @@ class AutopilotRun(BaseModel):
     current_stage: str
     tier: int
     execution_mode: Literal["runner", "skill"] = "runner"
+    review_backend: Optional[str] = None
+    challenge_backend: Optional[str] = None
     protocol_step: str = "spec_prep_started"
     next_required_action: Optional[str] = None
     required_tool: Optional[str] = None
@@ -191,6 +193,8 @@ def _project_state_payload(run: AutopilotRun, active: bool = True) -> dict[str, 
         "spec_id": run.spec_id,
         "status": run.status,
         "execution_mode": run.execution_mode,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
         "current_stage": run.current_stage,
         "tier": run.tier,
         "protocol_step": run.protocol_step,
@@ -223,6 +227,8 @@ def write_project_state(run: AutopilotRun, workspace_path: str | Path, active: b
             "run_id": run.run_id,
             "state_path": str(state_path),
             "protocol_step": run.protocol_step,
+            "review_backend": run.review_backend,
+            "challenge_backend": run.challenge_backend,
             "next_required_action": run.next_required_action,
             "required_tool": run.required_tool,
             "updated_at": run.updated_at,
@@ -350,6 +356,8 @@ def checkpoint_run(
     note: str | None = None,
     workspace_path: str | Path | None = None,
     execution_mode: Literal["runner", "skill"] = "skill",
+    review_backend: str | None = None,
+    challenge_backend: str | None = None,
 ) -> AutopilotRun:
     """Record a durable protocol checkpoint and optionally mirror it locally."""
     now = time.time()
@@ -358,6 +366,10 @@ def checkpoint_run(
 
     run.schema_version = "1.1"
     run.execution_mode = execution_mode
+    if review_backend is not None:
+        run.review_backend = review_backend
+    if challenge_backend is not None:
+        run.challenge_backend = challenge_backend
     run.protocol_step = protocol_step
     run.next_required_action = next_required_action
     run.required_tool = required_tool

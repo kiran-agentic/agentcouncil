@@ -1563,7 +1563,9 @@ def journal_get_tool(session_id: str) -> dict:
 def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
                             requirements: list[str], acceptance_criteria: list[str],
                             tier: int = 2, target_files: list[str] | None = None,
-                            escalation_level: str = "normal") -> dict:
+                            escalation_level: str = "normal",
+                            review_backend: str | None = None,
+                            challenge_backend: str | None = None) -> dict:
     """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
 
     Call this before autopilot_start. Returns a run_id to use with other tools.
@@ -1593,6 +1595,8 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         run_id=run_id, spec_id=spec_id, status="running",
         current_stage="spec_prep", tier=computed_tier,
         execution_mode="skill",
+        review_backend=review_backend,
+        challenge_backend=challenge_backend or review_backend,
         protocol_step="spec_prep_started",
         next_required_action="Write docs/autopilot/active-run.json via autopilot_checkpoint, then run the spec review gate.",
         required_tool="autopilot_checkpoint",
@@ -1611,13 +1615,19 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         "tier": run.tier,
         "tier_classification_reason": run.tier_classification_reason,
         "protocol_step": run.protocol_step,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
         "resume_prompt": run.resume_prompt,
     }
 
 
-def _make_autopilot_orchestrator(registry: dict | None = None) -> LinearOrchestrator:
+def _make_autopilot_orchestrator(
+    registry: dict | None = None,
+    gate_backend: str | None = None,
+    challenge_backend: str | None = None,
+) -> LinearOrchestrator:
     """Create a LinearOrchestrator with real runners and optional gate executor.
 
     Gate execution through real protocol sessions is enabled when
@@ -1630,7 +1640,7 @@ def _make_autopilot_orchestrator(registry: dict | None = None) -> LinearOrchestr
     # Gate executor is opt-in: set AGENTCOUNCIL_AUTOPILOT_GATES=1 to enable
     gate_executor: GateExecutor | None = None
     if os.environ.get("AGENTCOUNCIL_AUTOPILOT_GATES") == "1":
-        gate_executor = GateExecutor()
+        gate_executor = GateExecutor(backend=gate_backend, challenge_backend=challenge_backend)
 
     return LinearOrchestrator(
         registry=registry,
@@ -1657,7 +1667,10 @@ def autopilot_start_tool(run_id: str) -> dict:
     if run.status == "completed":
         return {"run_id": run.run_id, "status": run.status, "message": "Run already completed"}
 
-    orchestrator = _make_autopilot_orchestrator()
+    orchestrator = _make_autopilot_orchestrator(
+        gate_backend=run.review_backend,
+        challenge_backend=run.challenge_backend,
+    )
     result = orchestrator.run_pipeline(run)
     return {
         "run_id": result.run_id, "status": result.status,
@@ -1675,6 +1688,8 @@ def autopilot_status_tool(run_id: str) -> dict:
         "run_id": run.run_id, "status": run.status,
         "current_stage": run.current_stage, "tier": run.tier,
         "execution_mode": run.execution_mode,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
         "protocol_step": run.protocol_step,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
@@ -1703,6 +1718,8 @@ def autopilot_checkpoint_tool(
     revision_guidance: str | None = None,
     note: str | None = None,
     workspace_path: str | None = None,
+    review_backend: str | None = None,
+    challenge_backend: str | None = None,
 ) -> dict:
     """Record durable `/autopilot` protocol progress.
 
@@ -1732,12 +1749,16 @@ def autopilot_checkpoint_tool(
         note=note,
         workspace_path=workspace,
         execution_mode="skill",
+        review_backend=review_backend,
+        challenge_backend=challenge_backend,
     )
     return {
         "run_id": run.run_id,
         "status": run.status,
         "current_stage": run.current_stage,
         "protocol_step": run.protocol_step,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
         "blocking_reason": run.blocking_reason,
@@ -1761,7 +1782,10 @@ def autopilot_resume_tool(run_id: str) -> dict:
     run.status = "running"
     persist(run)
 
-    orchestrator = _make_autopilot_orchestrator()
+    orchestrator = _make_autopilot_orchestrator(
+        gate_backend=run.review_backend,
+        challenge_backend=run.challenge_backend,
+    )
     result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
     return {
         "run_id": result.run_id, "status": result.status,

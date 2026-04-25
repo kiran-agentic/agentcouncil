@@ -2,7 +2,7 @@
 name: autopilot
 description: Council-governed autonomous delivery. Claude follows workflow recipes to plan and build; independent agents review at every stage transition. The full pipeline — spec, plan, build, verify, ship — with review loops and conditional challenge gates.
 allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_checkpoint mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
-argument-hint: [what to build — describe the feature, fix, or change]
+argument-hint: [what to build — describe the feature, fix, or change] [backend=<review-profile>] [challenge_backend=<challenge-profile>]
 ---
 
 # AgentCouncil Autopilot
@@ -15,6 +15,18 @@ You are running the AgentCouncil autopilot pipeline — council-governed autonom
 ```
 spec_prep → REVIEW_LOOP → plan → REVIEW_LOOP → build → REVIEW_LOOP → verify → CHALLENGE? → ship
 ```
+
+## Gate Backend Selection
+
+Parse optional backend arguments from `$ARGUMENTS` before Step 0:
+- `backend=<profile>` selects the outside reviewer backend for every `review_loop` gate.
+- `challenge_backend=<profile>` selects the outside attacker backend for the `challenge` gate.
+- If `challenge_backend` is omitted, use `backend`.
+- If both are omitted, omit the backend parameter and let AgentCouncil use the configured default profile.
+
+Model choice is via named profiles in `.agentcouncil.json` or `~/.agentcouncil.json`. Example: `/autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging`. Non-gate stages run on the active Claude Code lead model; `/autopilot` does not create separate implementation subagents or choose a different model for spec, plan, build, verify, or ship.
+
+Record these as `REVIEW_BACKEND` and `CHALLENGE_BACKEND`.
 
 ## Protocol — follow these steps exactly
 
@@ -92,7 +104,7 @@ Display the spec, then proceed immediately to validation. Do not wait for user c
 
 Write the spec to disk before registering. Create the file `docs/autopilot/specs/{spec_id}.md` with the full spec content formatted as markdown. This persists the spec for future reference independent of this conversation.
 
-Call `mcp__agentcouncil__autopilot_prepare` with all spec fields, plus `escalation_level=ESCALATION_LEVEL`.
+Call `mcp__agentcouncil__autopilot_prepare` with all spec fields, plus `escalation_level=ESCALATION_LEVEL`, `review_backend=REVIEW_BACKEND` if set, and `challenge_backend=CHALLENGE_BACKEND` if set.
 
 Save the returned `run_id` and `tier`. Display:
 ```
@@ -116,6 +128,7 @@ Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
 - **artifact_type**: `"plan"`
 - **review_objective**: `"Review this spec for completeness, feasibility, and risk before planning begins"`
 - **focus_areas**: `["requirements clarity", "acceptance criteria testability", "testing strategy completeness", "behavioral boundaries defined", "scope boundaries", "missing edge cases"]`
+- **backend**: `REVIEW_BACKEND` if set
 
 **Handle the gate decision from `final_verdict`:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="spec_review_passed"`, `stage="spec_prep"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 5
@@ -176,6 +189,7 @@ Call `mcp__agentcouncil__review_loop`:
 - **artifact_type**: `"plan"`
 - **review_objective**: `"Review this implementation plan for completeness, ordering, risk, and verification coverage"`
 - **focus_areas**: `["task decomposition", "dependency ordering", "acceptance probe coverage", "scope creep"]`
+- **backend**: `REVIEW_BACKEND` if set
 
 **Handle the gate decision:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="plan_review_passed"`, `stage="plan"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 7 (do NOT ask the user for confirmation — autopilot is autonomous)
@@ -275,6 +289,7 @@ Call `mcp__agentcouncil__review_loop`:
 - **artifact_type**: `"code"`
 - **review_objective**: `"Review the implementation for correctness, quality, and spec compliance"`
 - **focus_areas**: `["correctness", "test coverage", "spec compliance", "code quality", "security"]`
+- **backend**: `REVIEW_BACKEND` if set
 
 **Handle the gate decision:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="build_review_passed"`, `stage="build"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 9
@@ -329,6 +344,7 @@ If the challenge gate should fire, call `mcp__agentcouncil__challenge`:
 - **assumptions**: List of assumptions from the spec and plan
 - **success_criteria**: The acceptance criteria from the spec
 - **rounds**: 2
+- **backend**: `CHALLENGE_BACKEND` if set
 
 **Handle the gate decision from `artifact.readiness`:**
 - **`ready`** → call `autopilot_checkpoint` with `protocol_step="challenge_passed"`, `stage="verify"`, `gate_decision="ready"`, then proceed to Step 11

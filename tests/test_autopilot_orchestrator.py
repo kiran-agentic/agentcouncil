@@ -779,6 +779,25 @@ class TestMCPTools:
         files = list(tmp_path.glob("*.json"))
         assert len(files) == 1
 
+    def test_prepare_persists_gate_backends(self, tmp_path, monkeypatch):
+        """autopilot_prepare stores review/challenge backend choices."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        from agentcouncil.server import autopilot_prepare_tool, autopilot_status_tool
+
+        prep = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"],
+            review_backend="openrouter-gpt",
+            challenge_backend="bedrock-sonnet",
+        )
+
+        assert prep["review_backend"] == "openrouter-gpt"
+        assert prep["challenge_backend"] == "bedrock-sonnet"
+
+        status = autopilot_status_tool(run_id=prep["run_id"])
+        assert status["review_backend"] == "openrouter-gpt"
+        assert status["challenge_backend"] == "bedrock-sonnet"
+
     def test_status_reflects_run(self, tmp_path, monkeypatch):
         """autopilot_status returns current run state."""
         monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
@@ -817,10 +836,14 @@ class TestMCPTools:
             stage="build",
             stage_status="gated",
             workspace_path=str(tmp_path),
+            review_backend="codex",
+            challenge_backend="claude",
         )
 
         assert checkpoint["protocol_step"] == "awaiting_build_review"
         assert checkpoint["required_tool"] == "review_loop"
+        assert checkpoint["review_backend"] == "codex"
+        assert checkpoint["challenge_backend"] == "claude"
         assert checkpoint["active_state_path"].endswith(f"docs/autopilot/runs/{prep['run_id']}/state.json")
 
         status = autopilot_status_tool(run_id=prep["run_id"])

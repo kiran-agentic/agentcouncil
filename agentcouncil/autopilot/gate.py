@@ -48,6 +48,7 @@ class GateExecutor:
     def __init__(
         self,
         backend: Optional[str] = None,
+        challenge_backend: Optional[str] = None,
         normalizer: Optional[GateNormalizer] = None,
     ) -> None:
         """Initialize the gate executor.
@@ -56,10 +57,13 @@ class GateExecutor:
             backend: Named backend profile for the outside agent.
                 Defaults to AGENTCOUNCIL_OUTSIDE_AGENT env var, then None
                 (which lets _make_provider pick the default).
+            challenge_backend: Optional backend profile for challenge gates.
+                Defaults to backend when omitted.
             normalizer: GateNormalizer instance. Defaults to GateNormalizer().
         """
         import os
         self._backend = backend or os.environ.get("AGENTCOUNCIL_OUTSIDE_AGENT")
+        self._challenge_backend = challenge_backend or self._backend
         self._normalizer = normalizer or GateNormalizer()
 
     def run_gate(
@@ -110,7 +114,7 @@ class GateExecutor:
     # Protocol runners
     # ------------------------------------------------------------------
 
-    def _create_session(self) -> tuple[Any, Any, Any, Any]:
+    def _create_session(self, backend: Optional[str] = None) -> tuple[Any, Any, Any, Any]:
         """Create outside session + adapter and lead adapter.
 
         Returns (provider, session, outside_adapter, lead_adapter).
@@ -121,9 +125,10 @@ class GateExecutor:
         from agentcouncil.server import _make_provider
 
         from agentcouncil.server import _get_workspace_sync
-        provider = _make_provider(profile=self._backend)
+        selected_backend = self._backend if backend is None else backend
+        provider = _make_provider(profile=selected_backend)
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
-        session = OutsideSession(provider, runtime, profile=self._backend)
+        session = OutsideSession(provider, runtime, profile=selected_backend)
         outside = OutsideSessionAdapter(session)
         lead = ClaudeAdapter(model="opus", timeout=900)
 
@@ -158,7 +163,7 @@ class GateExecutor:
 
         prior_review_context = kwargs.get("prior_review_context")
 
-        provider, session, outside, lead = self._create_session()
+        provider, session, outside, lead = self._create_session(self._backend)
 
         async def _execute() -> Any:
             await session.open()
@@ -193,7 +198,7 @@ class GateExecutor:
         from agentcouncil.challenge import challenge
         from agentcouncil.schemas import ChallengeInput
 
-        provider, session, outside, lead = self._create_session()
+        provider, session, outside, lead = self._create_session(self._challenge_backend)
 
         challenge_input = ChallengeInput(
             artifact=artifact_text,
@@ -229,7 +234,7 @@ class GateExecutor:
         from agentcouncil.review import review
         from agentcouncil.schemas import ReviewInput
 
-        provider, session, outside, lead = self._create_session()
+        provider, session, outside, lead = self._create_session(self._backend)
 
         review_input = ReviewInput(
             artifact=artifact_text,
@@ -262,7 +267,7 @@ class GateExecutor:
         from agentcouncil.deliberation import brainstorm
         from agentcouncil.brief import Brief, BriefBuilder
 
-        provider, session, outside, lead = self._create_session()
+        provider, session, outside, lead = self._create_session(self._backend)
 
         brief = BriefBuilder(
             context=artifact_text,
@@ -296,7 +301,7 @@ class GateExecutor:
         from agentcouncil.decide import decide
         from agentcouncil.schemas import DecideInput, DecideOption
 
-        provider, session, outside, lead = self._create_session()
+        provider, session, outside, lead = self._create_session(self._backend)
 
         decide_input = DecideInput(
             decision=f"Should stage '{stage_name}' output advance to the next stage?",

@@ -348,9 +348,34 @@ Persistent providers are more token-efficient for multi-turn deliberations. Repl
 
 ## Autopilot Gate Backends
 
-The four autopilot MCP tools (`autopilot_prepare`, `autopilot_start`, `autopilot_status`, `autopilot_resume`) do not accept backend, profile, or model arguments. Backend selection — profiles, env vars, per-invocation overrides — applies to the deliberation tools (`brainstorm`, `review`, `decide`, `challenge`), not autopilot gates.
+The `/autopilot` skill accepts gate backend overrides:
 
-Current autopilot gates use stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions. The gate normalizer translates protocol verdicts to advance/revise/block decisions, but the underlying protocol execution is stubbed. Real gate execution through backends is planned but not yet wired.
+```text
+/autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging
+```
+
+- `backend=<profile>` selects the outside reviewer backend for every `review_loop` gate.
+- `challenge_backend=<profile>` selects the outside attacker backend for the `challenge` gate.
+- If `challenge_backend` is omitted, it defaults to `backend`.
+- If both are omitted, AgentCouncil uses the configured default profile.
+
+Model selection is done through named profiles. Put the model in `.agentcouncil.json` or `~/.agentcouncil.json`, then reference the profile by name:
+
+```json
+{
+  "profiles": {
+    "openrouter-gpt": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o",
+      "api_key_env": "OPENROUTER_API_KEY"
+    }
+  }
+}
+```
+
+The normal `/autopilot` spec, plan, build, verify, and ship steps run on the active Claude Code lead model. AgentCouncil only selects models for the independent review/challenge gate sessions.
+
+The lower-level `autopilot_prepare` tool also stores `review_backend` and `challenge_backend` in run state. When `AGENTCOUNCIL_AUTOPILOT_GATES=1` enables real gate execution for the typed MCP pipeline, `autopilot_start` and `autopilot_resume` use those stored gate backends. Without that flag, the typed pipeline continues to use stub gate artifacts for compatibility.
 
 ## Conformance Certification
 

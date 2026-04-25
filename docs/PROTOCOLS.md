@@ -222,6 +222,10 @@ The normalizer translates protocol-specific verdicts into uniform gate decisions
 | verify | challenge | Conditional — only when `tier >= 3` or `verify.side_effect_level == "external"` |
 | ship | none | Always advances |
 
+### Backend Selection
+
+The `/autopilot` skill supports `backend=<profile>` for all `review_loop` gates and `challenge_backend=<profile>` for the conditional `challenge` gate. These select the outside reviewer/attacker model via named backend profiles. Non-gate stages run on the active Claude Code lead model.
+
 ### Current Limitations
 
-The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level Claude Code skill. Its gate execution still uses stub protocol artifacts via `_run_gate()` rather than live backend deliberation sessions, and the `plan` and `build` runners are still evolving. Use the `/autopilot` skill for the clearest end-to-end experience today.
+The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level Claude Code skill, and the `plan` and `build` runners are still evolving. Real typed-pipeline gate execution is available only when `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise it uses stub gate artifacts for compatibility. Use the `/autopilot` skill for the clearest end-to-end experience today.

@@ -70,6 +70,14 @@ AgentCouncil now includes an **`/autopilot` skill** for Claude Code. It is the p
 
 The skill is designed to keep Claude doing the implementation work while AgentCouncil's review and challenge tools provide stage gates.
 
+Choose the review/challenge model with backend profiles:
+
+```text
+/autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging
+```
+
+`backend` is used for all `review_loop` gates. `challenge_backend` is used for the conditional adversarial challenge gate and defaults to `backend` when omitted. The spec, plan, build, verify, and ship work runs on the active Claude Code lead model.
+
 ### `/autopilot` flow
 
 ```

@@ -393,6 +393,8 @@ def test_autopilot_run_protocol_guard_defaults():
     run = _make_run()
     assert run.schema_version == "1.1"
     assert run.execution_mode == "runner"
+    assert run.review_backend is None
+    assert run.challenge_backend is None
     assert run.protocol_step == "spec_prep_started"
     assert run.next_required_action is None
     assert run.required_tool is None
@@ -428,6 +430,22 @@ def test_checkpoint_writes_project_local_state(run_dir, tmp_path):
     assert active_data["required_tool"] == "review_loop"
     assert state_data["protocol_step"] == "awaiting_spec_review"
     assert state_data["artifact_refs"]["spec"] == "docs/autopilot/specs/test-spec.md"
+
+
+def test_checkpoint_persists_gate_backends(run_dir):
+    """checkpoint_run can persist review/challenge backend choices."""
+    run = _make_run(run_id="backend-run")
+    persist(run)
+
+    updated = checkpoint_run(
+        "backend-run",
+        protocol_step="awaiting_spec_review",
+        review_backend="openrouter-gpt",
+        challenge_backend="bedrock-sonnet",
+    )
+
+    assert updated.review_backend == "openrouter-gpt"
+    assert updated.challenge_backend == "bedrock-sonnet"
 
 
 def test_checkpoint_refuses_verify_before_build_review(run_dir):
