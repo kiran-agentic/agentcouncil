@@ -12,6 +12,7 @@ AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for i
 | "Will this break?" | **challenge** |
 | "Fix until clean" | `review_loop` MCP tool (convergence loop) |
 | "Get N perspectives" | **brainstorm** with `backends=` (Blind Panel) |
+| "Build this with council gates" | **`/autopilot`** skill |
 
 ## Protocol Comparison
 
@@ -197,6 +198,8 @@ But each works standalone:
 
 The v2.0 Autopilot pipeline is designed to use protocols as stage gates. Each stage's manifest declares which protocol type serves as its gate (e.g., `plan` uses `review_loop`, `verify` uses `challenge`). After a stage completes, the orchestrator creates a gate artifact and feeds it through the `GateNormalizer` to produce an advance/revise/block decision.
 
+For most users, the best way to exercise this in Claude Code is the **`/autopilot` skill**, which uses AgentCouncil's review and challenge tools as governance checkpoints while Claude performs the actual implementation work.
+
 ### GateNormalizer Mapping
 
 The normalizer translates protocol-specific verdicts into uniform gate decisions:
@@ -221,4 +224,4 @@ The normalizer translates protocol-specific verdicts into uniform gate decisions
 
 ### Current Limitations
 
-The current MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) uses stub protocol artifacts via `_run_gate()`, not live backend deliberation sessions. Real gate execution through backends is planned but not yet wired. The `plan` and `build` stages also use stub runners.
+The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level Claude Code skill. Its gate execution still uses stub protocol artifacts via `_run_gate()` rather than live backend deliberation sessions, and the `plan` and `build` runners are still evolving. Use the `/autopilot` skill for the clearest end-to-end experience today.

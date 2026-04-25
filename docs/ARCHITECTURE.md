@@ -151,6 +151,7 @@ skills/              # Skill definitions (protocol instructions)
   decide/SKILL.md       # /decide
   challenge/SKILL.md    # /challenge — also accepts specialist_provider
   inspect/SKILL.md      # /inspect — journal session viewer (v2.0)
+  autopilot/SKILL.md    # /autopilot — governed delivery workflow using review/challenge gates
 ```
 
 The skill files are the primary interface. The Python package provides the MCP session tools, the four protocol tools, the journal/inspector tools, and the library-mode engines.
@@ -206,12 +207,12 @@ The four deliberation functions are also exposed as MCP tools for library-mode u
 
 | Tool | Signature | Purpose |
 |------|-----------|---------|
-| `autopilot_prepare` | `(intent, spec_id, title, objective, requirements, acceptance_criteria, tier=2, target_files=None)` | Validate spec, classify tier, create run |
+| `autopilot_prepare` | `(intent, spec_id, title, objective, requirements, acceptance_criteria, tier=2, target_files=None, escalation_level="normal")` | Validate spec, classify tier, create run |
 | `autopilot_start` | `(run_id)` | Execute the full pipeline from spec_prep through ship |
 | `autopilot_status` | `(run_id)` | Inspect current run state, stages, and gate decisions |
 | `autopilot_resume` | `(run_id)` | Continue a paused run from the blocked stage |
 
-These tools accept no backend, profile, or model arguments. Gate execution currently uses stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions.
+These tools accept no backend, profile, or model arguments. In practice, most users should think of them as the infrastructure layer under the higher-level `/autopilot` skill. Gate execution in this low-level path currently uses stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions.
 
 ## Config System
 

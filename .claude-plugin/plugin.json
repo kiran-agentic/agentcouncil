@@ -1,7 +1,7 @@
 {
   "name": "agentcouncil",
   "description": "Multi-agent deliberation protocols: brainstorm, review (with --loop convergence), decide, challenge, inspect. Independence before convergence.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Kiran Krishna"
   },

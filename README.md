@@ -7,22 +7,45 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 [![Tests](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml/badge.svg)](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml)
 
-Two agents. Distinct roles. No echo chamber.
+The biggest release in `0.3.0`: **`/autopilot`**.
 
-AgentCouncil convenes Claude Code and an outside agent — each with a distinct role — to deliberate on problems. In brainstorm, both propose independently before seeing each other's work. In review, decide, and challenge, the outside agent evaluates, compares, or attacks without seeing Claude Code's internal reasoning. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
+AgentCouncil now ships a council-governed autonomous delivery workflow for Claude Code. You start with **`/autopilot`**, AgentCouncil writes and reviews the spec, plans the work, builds it, re-reviews the build, verifies the result, and only then moves toward shipping.
 
-**v2.0 infrastructure:** Persistent deliberation journal, iterative convergence loops (review findings that loop until verified), sealed N-party Blind Panel proposals, resumable protocol state, a CLI session inspector, and an autopilot pipeline with typed artifacts, durable run state, gate normalization, and tier classification. Expert Witness specialist checks and live Turn Stream events are available as building blocks but not yet wired into protocol execution.
+Underneath that headline feature, AgentCouncil still provides its core multi-agent protocols: `/brainstorm`, `/review`, `/decide`, `/challenge`, and `/inspect`. Claude Code works with an outside agent that stays independent by role, backend, and session. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
 </div>
 
 ---
 
-## Four Protocols
+## What's New In 0.3.0
 
-Claude Code (referred to as "Claude" in protocol descriptions below) orchestrates all four protocols. The outside agent is a separate LLM session.
+This release is centered on **`/autopilot`**:
+
+- **`/autopilot`** is now the headline workflow: a governed implementation skill for Claude Code with spec, planning, build, review, verification, and ship stages.
+- **Deliberation Journal** stores every protocol run under `~/.agentcouncil/journal/` with transcript, artifact, provenance, and status metadata.
+- **`/review --loop` convergence mode** tracks findings across iterations until they are verified, reopened, or explicitly accepted.
+- **Blind Panel brainstorms** let multiple outside agents propose in parallel before reveal with `/brainstorm backends=...`.
+- **`/inspect`** lets you browse recent sessions from inside Claude Code, and the `agentcouncil` CLI exposes the same journal from the terminal.
+- **Transcript provenance** records provider, model, phase, timestamps, and turn lineage on transcript turns.
+
+## At A Glance
+
+| Capability | What it gives you |
+|:---|:---|
+| `/autopilot` | The main governed delivery skill for Claude Code |
+| Protocols | Independent proposal, review, decision, and challenge workflows |
+| Convergence | Iterative review loops that track finding status across passes |
+| Journal + Inspect | Persistent history and session replay for past deliberations |
+| Blind Panel | Multiple independent outside proposals before synthesis |
+| Autopilot MCP Tools | Run state, tiering, status, and resume infrastructure under the skill |
+
+## Core Skills
+
+Claude Code (referred to as "Claude" in protocol descriptions below) orchestrates these skills. The outside agent is a separate LLM session.
 
 | You're asking... | Command | What happens |
 |:---|:---|:---|
+| "Build this with council gates" | `/autopilot` | Writes a spec, reviews it, plans, builds, verifies, and keeps council gates in the loop |
 | "What should we do?" | `/brainstorm` | Both agents propose independently, then negotiate toward consensus |
 | "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
 | "Review iteratively" | `/review --loop` | Iterative review: findings → describe fix → re-review → verify |
@@ -30,15 +53,32 @@ Claude Code (referred to as "Claude" in protocol descriptions below) orchestrate
 | "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
 | "What happened?" | `/inspect` | View past deliberation sessions from the journal |
 
-> **Common flow:** brainstorm (explore) → decide (choose) → review (check) → challenge (stress-test)
+> **Release headline:** start with `/autopilot` when you want AgentCouncil to drive delivery, and use the other skills when you want focused deliberation.
 
-## Autopilot Pipeline
+## Autopilot
 
-v2.0 adds a gated work pipeline that sequences five stages with typed artifacts, persistent state, and tiered autonomy:
+AgentCouncil now includes an **`/autopilot` skill** for Claude Code. It is the primary user-facing workflow for autonomous delivery with council review built in.
+
+**What `/autopilot` does:**
+
+- reads your request and local project conventions
+- writes a persisted spec under `docs/autopilot/specs/`
+- reviews the spec before planning
+- produces and reviews an implementation plan
+- builds the change, gathers evidence, and reviews the build
+- verifies acceptance criteria before shipping
+
+The skill is designed to keep Claude doing the implementation work while AgentCouncil's review and challenge tools provide stage gates.
+
+### `/autopilot` flow
 
 ```
-spec_prep → plan → build → verify → ship
+spec_prep → review_loop → plan → review_loop → build → review_loop → verify → challenge? → ship
 ```
+
+### Autopilot infrastructure
+
+Under the hood, v2.0 also adds a typed MCP autopilot pipeline with durable run state:
 
 Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`plan` and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. `spec_prep` and `ship` have no gates.
 
@@ -60,11 +100,11 @@ Runs are classified into tiers based on target files:
 
 Tier only promotes (never demotes). Sensitive file detection during execution can promote mid-run.
 
-### Current Limitations
+### Current Status
 
-- `plan` and `build` stages use stub runners — real implementations planned
-- Gates use stub protocol artifacts, not live backend deliberation sessions
-- No skill/slash-command interface yet — autopilot is MCP-tool only
+- **Use `/autopilot` as the main Claude Code experience.** It is the best way to exercise the workflow end to end today.
+- **The typed MCP autopilot tools are available now** for run creation, persistence, tier classification, status, and resume.
+- **The MCP autopilot path is still evolving.** Its gate execution and some runner behavior remain more infrastructure-oriented than the higher-level `/autopilot` skill experience.
 
 ## Quick Start
 
@@ -183,13 +223,26 @@ No configuration changes or migrations are required between versions. New featur
 
 That's it. Claude Code writes its proposal, sends a neutral brief to the outside agent, the outside agent proposes independently, they negotiate, and you get a structured consensus.
 
-Want more depth? Add rounds, use multiple backends, or run iterative review:
+Want more depth? Add rounds, use multiple backends, run iterative review, or use autopilot:
 
 ```
 /brainstorm 4 rounds How should we handle caching for our API?
 /review --loop Review this code until all findings are fixed
 /brainstorm backends=codex,ollama-local How should we cache?   # Blind Panel: 2 independent proposals
+/autopilot Add a smoke test for the inspector CLI help output
 ```
+
+### What To Use When
+
+| Goal | Command |
+|:---|:---|
+| Explore solutions independently | `/brainstorm` |
+| Compare concrete options | `/decide` |
+| Get an independent critique | `/review` |
+| Fix until findings are verified | `/review --loop` |
+| Stress-test a plan before shipping | `/challenge` |
+| Run a governed implementation workflow | `/autopilot` |
+| Inspect past sessions | `/inspect` |
 
 ### Inspect Past Deliberations
 
@@ -294,10 +347,16 @@ Integration tests require `claude` and `codex` CLIs on PATH:
 pytest -m real
 ```
 
-**Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. After modifying or adding skill files, copy them to the cache:
+**Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. For skill-only changes, copying `skills/` is enough. For full workflow or server changes, sync the cached plugin copy:
 
 ```bash
-cp -r skills/ ~/.claude/plugins/cache/agentcouncil/agentcouncil/*/skills/
+PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.3.0
+
+rsync -a --delete agentcouncil/ "$PLUGIN/agentcouncil/"
+rsync -a --delete skills/ "$PLUGIN/skills/"
+rsync -a --delete scripts/ "$PLUGIN/scripts/"
+rsync -a --delete .claude-plugin/ "$PLUGIN/.claude-plugin/"
+cp pyproject.toml "$PLUGIN/pyproject.toml"
 ```
 
 Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update` get fresh cache automatically.
@@ -311,6 +370,7 @@ Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update
 | [PROTOCOLS.md](docs/PROTOCOLS.md) | Side-by-side protocol comparison with worked example |
 | [BACKENDS.md](docs/BACKENDS.md) | Backend selection and independence tiers |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical design for contributors |
+| [CHANGELOG.md](CHANGELOG.md) | Release-by-release feature history and limitations |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | How to contribute |
 
 ## License

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -53,7 +54,7 @@ __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.2.0")
+mcp = FastMCP("agentcouncil", version="0.3.0")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -71,6 +72,17 @@ _PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Tas
 # ---------------------------------------------------------------------------
 
 _resolved_workspace: str | None = None
+_MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET = 32_000
+_MCP_REVIEW_LOOP_FIELD_LIMITS = {
+    "impact": 400,
+    "description": 700,
+    "evidence": 500,
+    "reviewer_notes": 300,
+    "addressed_change": 300,
+    "wont_fix_rationale": 300,
+}
+_MCP_REVIEW_LOOP_FINDINGS_LIMIT = 12
+_SESSION_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 def _parent_process_cwd() -> str | None:
@@ -1202,6 +1214,97 @@ def _persist_journal(
         logging.warning("journal persist failed (non-fatal): %s", e)
 
 
+def _truncate_mcp_string(value: str, limit: int) -> tuple[str, bool]:
+    """Bound a string for MCP transport while preserving the leading context."""
+    if len(value) <= limit:
+        return value, False
+    suffix = f"... [truncated {len(value) - limit} chars]"
+    return value[: max(0, limit - len(suffix))] + suffix, True
+
+
+def _compact_review_loop_payload(payload: dict) -> dict:
+    """Trim review_loop MCP responses so large reviews still make it back."""
+    compact = json.loads(json.dumps(payload))
+    truncated = False
+
+    findings = compact.get("final_findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            for field, limit in _MCP_REVIEW_LOOP_FIELD_LIMITS.items():
+                value = finding.get(field)
+                if isinstance(value, str):
+                    finding[field], changed = _truncate_mcp_string(value, limit)
+                    truncated = truncated or changed
+            locations = finding.get("locations")
+            if isinstance(locations, list) and len(locations) > 8:
+                finding["locations"] = locations[:8]
+                truncated = True
+            source_refs = finding.get("source_refs")
+            if isinstance(source_refs, list) and len(source_refs) > 6:
+                finding["source_refs"] = source_refs[:6]
+                truncated = True
+
+        if len(findings) > _MCP_REVIEW_LOOP_FINDINGS_LIMIT:
+            compact["final_findings"] = findings[:_MCP_REVIEW_LOOP_FINDINGS_LIMIT]
+            compact["omitted_findings_count"] = (
+                len(findings) - _MCP_REVIEW_LOOP_FINDINGS_LIMIT
+            )
+            truncated = True
+
+    serialized = json.dumps(compact, ensure_ascii=False)
+    if len(serialized) > _MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET:
+        trimmed_findings: list[dict] = []
+        for finding in compact.get("final_findings", []):
+            trial = dict(compact)
+            candidate = trimmed_findings + [finding]
+            trial["final_findings"] = candidate
+            if len(json.dumps(trial, ensure_ascii=False)) > _MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET:
+                break
+            trimmed_findings = candidate
+
+        omitted = len(compact.get("final_findings", [])) - len(trimmed_findings)
+        compact["final_findings"] = trimmed_findings
+        if omitted > 0:
+            compact["omitted_findings_count"] = compact.get("omitted_findings_count", 0) + omitted
+            truncated = True
+
+    if truncated:
+        compact["response_truncated"] = True
+    return compact
+
+
+async def _close_review_loop_resources(
+    provider: OutsideProvider,
+    session: OutsideSession,
+) -> None:
+    """Best-effort cleanup that never blocks the tool response indefinitely."""
+    try:
+        await asyncio.wait_for(
+            provider.close(), timeout=_SESSION_CLOSE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "review_loop: provider.close() timed out after %.1fs",
+            _SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        log.exception("review_loop: provider.close() failed during cleanup")
+
+    try:
+        await asyncio.wait_for(
+            session.close(), timeout=_SESSION_CLOSE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "review_loop: session.close() timed out after %.1fs",
+            _SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        log.exception("review_loop: session.close() failed during cleanup")
+
+
 @mcp.tool(name="protocol_resume")
 async def protocol_resume_tool(
     session_id: str,
@@ -1309,25 +1412,62 @@ async def review_loop_tool(
                 prior_review_context=prior_review_context,
             )
         finally:
-            await provider.close()
-            await session.close()
-    except ValueError as exc:
-        log.warning("review_loop: _make_provider failed (%s), falling back to legacy adapter", exc)
-        outside = resolve_outside_adapter(backend, timeout=900)
-        result = await review_loop(
-            artifact=artifact,
-            artifact_type=artifact_type,
-            outside_adapter=outside,
-            lead_adapter=lead,
-            review_objective=review_objective,
-            focus_areas=focus_areas,
-            max_iterations=max_iterations,
-            file_paths=file_paths,
-            workspace_access="none",  # fallback path — unknown capability
-            prior_review_context=prior_review_context,
+            await _close_review_loop_resources(provider, session)
+    except (ValueError, ProviderError) as exc:
+        log.warning(
+            "review_loop: provider-backed path failed (%s), falling back to legacy adapter",
+            exc,
         )
+        try:
+            outside = resolve_outside_adapter(backend, timeout=900)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access="none",  # fallback path — unknown capability
+                prior_review_context=prior_review_context,
+            )
+        except Exception as fallback_exc:
+            log.exception(
+                "review_loop: legacy fallback failed after provider-backed failure"
+            )
+            raise RuntimeError(
+                "review_loop failed during provider-backed execution "
+                f"({exc}) and legacy fallback ({fallback_exc})"
+            ) from fallback_exc
+    except Exception as exc:
+        log.exception(
+            "review_loop: unexpected provider-backed failure, falling back to legacy adapter"
+        )
+        try:
+            outside = resolve_outside_adapter(backend, timeout=900)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access="none",  # fallback path — unknown capability
+                prior_review_context=prior_review_context,
+            )
+        except Exception as fallback_exc:
+            log.exception(
+                "review_loop: legacy fallback failed after unexpected provider-backed failure"
+            )
+            raise RuntimeError(
+                "review_loop failed during provider-backed execution "
+                f"({exc}) and legacy fallback ({fallback_exc})"
+            ) from fallback_exc
 
-    return result.model_dump()
+    return _compact_review_loop_payload(result.model_dump())
 
 
 @mcp.tool(name="journal_stream")
