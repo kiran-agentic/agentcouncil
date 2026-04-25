@@ -25,6 +25,7 @@ Before Step 0, check for `docs/autopilot/active-run.json`.
 If it exists and `active` is not `false`:
 - Read the referenced `state_path`.
 - If it contains `run_id`, call `mcp__agentcouncil__autopilot_status`.
+- If `state_path` is missing but `run_id` is present, call `autopilot_status` and treat completed/failed runs as stale.
 - Follow `next_required_action` before doing anything else.
 - If `required_tool` is `review_loop` or `challenge`, run that gate now. Do not continue implementation, verification, or shipping first.
 - If `blocking_reason` is present, stop and report the blocker.
