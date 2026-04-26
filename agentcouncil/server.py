@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -15,13 +16,15 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
+
+log = logging.getLogger("agentcouncil.server")
 
 from agentcouncil.adapters import (
     ClaudeAdapter,
     resolve_outside_adapter, resolve_outside_backend,
 )
-from agentcouncil.config import ProfileLoader, BackendProfile
+from agentcouncil.config import ProfileLoader, BackendProfile, set_project_dir
 from agentcouncil.session import OutsideSession, OutsideSessionAdapter
 from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.brief import Brief, BriefBuilder, CodeExcerpt, ContaminatedBriefError, CONTAMINATION_PATTERNS
@@ -35,12 +38,32 @@ from agentcouncil.providers.base import OutsideProvider, ProviderError
 from agentcouncil.runtime import OutsideRuntime
 from agentcouncil.session import OutsideSession
 from agentcouncil.schemas import JournalEntry
+from agentcouncil.autopilot.orchestrator import LinearOrchestrator
+from agentcouncil.autopilot.run import (
+    AutopilotRun,
+    StageCheckpoint,
+    build_resume_prompt,
+    checkpoint_run,
+    load_run,
+    persist,
+    resume,
+    validate_transition,
+)
+from agentcouncil.autopilot.loader import load_default_registry
+from agentcouncil.autopilot.artifacts import SpecArtifact
+from agentcouncil.autopilot.prep import run_spec_prep
+from agentcouncil.autopilot.plan import run_plan
+from agentcouncil.autopilot.build import run_build
+from agentcouncil.autopilot.verify import run_verify
+from agentcouncil.autopilot.ship import run_ship
+from agentcouncil.autopilot.gate import GateExecutor
+from agentcouncil.autopilot.router import classify_run
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.2.0")
+mcp = FastMCP("agentcouncil", version="0.3.0")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -49,6 +72,165 @@ mcp = FastMCP("agentcouncil", version="0.2.0")
 
 _SESSIONS: dict[str, OutsideSession] = {}
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+_PENDING_RESPONSES: dict[str, asyncio.Task] = {}  # session_id -> background Task
+
+# ---------------------------------------------------------------------------
+# Workspace resolution — prefer MCP roots over Path.cwd().
+# The MCP server runs from the plugin cache directory, not the user's project.
+# MCP roots tell us the actual project directory the client is working in.
+# ---------------------------------------------------------------------------
+
+_resolved_workspace: str | None = None
+_MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET = 32_000
+_MCP_REVIEW_LOOP_FIELD_LIMITS = {
+    "impact": 400,
+    "description": 700,
+    "evidence": 500,
+    "reviewer_notes": 300,
+    "addressed_change": 300,
+    "wont_fix_rationale": 300,
+}
+_MCP_REVIEW_LOOP_FINDINGS_LIMIT = 12
+_SESSION_CLOSE_TIMEOUT_SECONDS = 2.0
+
+
+def _parent_process_cwd() -> str | None:
+    """Get the cwd of the parent process (the Claude Code CLI).
+
+    Claude Code launches the MCP server as a subprocess from the user's project
+    directory. The parent's cwd is therefore the project directory, even when
+    the server itself runs from the plugin cache.
+
+    Tries /proc first (Linux), then lsof (macOS/BSD). Returns None if neither
+    works or the detected cwd is clearly wrong (e.g. plugin cache, root).
+    """
+    import subprocess
+
+    ppid = os.getppid()
+    if ppid <= 1:
+        return None
+
+    # Linux: /proc/<pid>/cwd is a symlink
+    proc_cwd = Path(f"/proc/{ppid}/cwd")
+    if proc_cwd.exists():
+        try:
+            return str(proc_cwd.resolve())
+        except OSError:
+            pass
+
+    # macOS/BSD: use lsof
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(ppid), "-d", "cwd", "-Fn"],
+            capture_output=True, text=True, timeout=2,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("n/"):
+                return line[1:]
+    except (OSError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return None
+
+
+def _is_plausible_project_dir(path: str) -> bool:
+    """Reject paths that are clearly not a user project."""
+    if not path or path == "/":
+        return False
+    # Plugin cache and Claude internals are never the user's project
+    bad_markers = (".claude/plugins/cache", "/claude/", "site-packages", "/.venv")
+    return not any(m in path for m in bad_markers)
+
+
+async def _resolve_workspace(ctx=None) -> str:
+    """Resolve the project workspace directory.
+
+    Called once from the first tool invocation. Caches the result globally
+    so all subsequent calls (including sync) use it.
+
+    Priority:
+    1. Cached result from a previous call
+    2. MCP roots from the client (first file:// root URI)
+    3. AGENTCOUNCIL_CWD env var
+    4. Parent process cwd (the Claude Code CLI's working directory)
+    5. Path.cwd() fallback (for tests and non-MCP contexts)
+    """
+    global _resolved_workspace
+    if _resolved_workspace is not None:
+        return _resolved_workspace
+
+    # 1. Try MCP roots from client context
+    if ctx is not None:
+        try:
+            roots = await ctx.list_roots()
+            if roots:
+                uri = str(roots[0].uri)
+                if uri.startswith("file://"):
+                    candidate = uri.removeprefix("file://")
+                    if _is_plausible_project_dir(candidate):
+                        _resolved_workspace = candidate
+                        log.warning("Workspace resolved from MCP roots: %s", _resolved_workspace)
+                        _sync_project_dir()
+                        return _resolved_workspace
+        except Exception as exc:
+            log.debug("MCP roots unavailable: %s", exc)
+
+    # 2. Env var override
+    env_cwd = os.environ.get("AGENTCOUNCIL_CWD")
+    if env_cwd and _is_plausible_project_dir(env_cwd):
+        _resolved_workspace = env_cwd
+        log.warning("Workspace resolved from AGENTCOUNCIL_CWD: %s", _resolved_workspace)
+        _sync_project_dir()
+        return _resolved_workspace
+
+    # 3. Parent process cwd (Claude Code CLI runs in the project dir)
+    parent_cwd = _parent_process_cwd()
+    if parent_cwd and _is_plausible_project_dir(parent_cwd):
+        _resolved_workspace = parent_cwd
+        log.warning("Workspace resolved from parent process cwd: %s", _resolved_workspace)
+        _sync_project_dir()
+        return _resolved_workspace
+
+    # 4. Last resort
+    _resolved_workspace = str(Path.cwd())
+    log.warning("Workspace using Path.cwd() fallback (may be wrong): %s", _resolved_workspace)
+    _sync_project_dir()
+    return _resolved_workspace
+
+
+def _resolve_workspace_sync() -> str:
+    """Best-effort project workspace resolution for synchronous MCP tools."""
+    global _resolved_workspace
+    if _resolved_workspace is not None:
+        return _resolved_workspace
+
+    env_cwd = os.environ.get("AGENTCOUNCIL_CWD")
+    if env_cwd and _is_plausible_project_dir(env_cwd):
+        _resolved_workspace = env_cwd
+        _sync_project_dir()
+        return _resolved_workspace
+
+    parent_cwd = _parent_process_cwd()
+    if parent_cwd and _is_plausible_project_dir(parent_cwd):
+        _resolved_workspace = parent_cwd
+        _sync_project_dir()
+        return _resolved_workspace
+
+    _resolved_workspace = str(Path.cwd())
+    _sync_project_dir()
+    return _resolved_workspace
+
+
+def _get_workspace_sync() -> str:
+    """Return cached workspace or CWD. Used by _make_provider and OutsideRuntime."""
+    return _resolved_workspace or str(Path.cwd())
+
+
+def _sync_project_dir() -> None:
+    """Push resolved workspace to config module so ProfileLoader finds the right .agentcouncil.json."""
+    ws = _resolved_workspace
+    if ws:
+        set_project_dir(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +241,7 @@ _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
 def _make_provider(
     profile: str | None = None,
     model: str | None = None,
+    workspace: str | None = None,
 ) -> OutsideProvider:
     """Resolve a named profile and instantiate the appropriate provider.
 
@@ -77,6 +260,9 @@ def _make_provider(
         ValueError: if the resolved result is an unrecognised legacy backend string.
         ProviderError: if the provider name in BackendProfile is unrecognised.
     """
+    # Ensure config sees the right project directory
+    if workspace:
+        set_project_dir(workspace)
     resolved = ProfileLoader().resolve(profile_name=profile)
 
     if isinstance(resolved, str):
@@ -89,7 +275,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.codex import CodexProvider
-            return CodexProvider(model=model, cwd=str(Path.cwd()))
+            return CodexProvider(model=model, cwd=workspace or _get_workspace_sync())
         elif resolved == "claude":
             if shutil.which("claude") is None:
                 raise ProviderError(
@@ -98,7 +284,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.claude import ClaudeProvider
-            return ClaudeProvider(model=model)
+            return ClaudeProvider(model=model, cwd=workspace or _get_workspace_sync())
         raise ValueError(
             f"Session API requires a named profile with provider=ollama/openrouter/bedrock/codex/claude. "
             f"Got legacy backend: {resolved!r}"
@@ -127,7 +313,7 @@ def _make_provider(
         from agentcouncil.providers.kiro import KiroProvider
         return KiroProvider(
             cli_path=bp.cli_path,
-            workspace=str(Path.cwd()),
+            workspace=workspace or _get_workspace_sync(),
         )
     elif bp.provider == "codex":
         if shutil.which("codex") is None:
@@ -139,7 +325,7 @@ def _make_provider(
         from agentcouncil.providers.codex import CodexProvider
         return CodexProvider(
             model=model or bp.model,
-            cwd=str(Path.cwd()),
+            cwd=workspace or _get_workspace_sync(),
         )
     elif bp.provider == "claude":
         if shutil.which("claude") is None:
@@ -151,6 +337,7 @@ def _make_provider(
         from agentcouncil.providers.claude import ClaudeProvider
         return ClaudeProvider(
             model=model or bp.model,
+            cwd=workspace or _get_workspace_sync(),
         )
     else:
         raise ProviderError(f"Unknown provider: {bp.provider!r}")
@@ -177,6 +364,8 @@ async def outside_start_tool(
     prompt: str,
     profile: str | None = None,
     model: str | None = None,
+    await_response: bool = True,
+    ctx: Context | None = None,
 ) -> dict:
     """Start a multi-turn session with an outside LLM backend.
 
@@ -187,17 +376,26 @@ async def outside_start_tool(
         prompt  — First message to send to the outside backend.
         profile — Named backend profile from .agentcouncil.json.
         model   — Optional model override (takes precedence over profile.model).
+        await_response — If True (default), blocks until the outside agent responds
+            and returns the response. If False, fires the prompt in the background
+            and returns immediately with status "pending". Use outside_read to
+            fetch the response later. Set to False when you want to do work in
+            parallel (e.g. write your own proposal while the outside agent works).
 
     Returns:
-        Dict with "session_id" (UUID string) and "response" (str).
+        Dict with "session_id" (UUID string) and either:
+        - "response" (str) when await_response=True
+        - "status": "pending" when await_response=False
     """
-    provider = _make_provider(profile, model)
+    # Resolve workspace from MCP roots on first call
+    workspace = await _resolve_workspace(ctx)
+    provider = _make_provider(profile, model, workspace=workspace)
 
     # Resolve the BackendProfile to get provider_name for session metadata
     resolved = ProfileLoader().resolve(profile_name=profile)
     provider_name = resolved.provider if isinstance(resolved, BackendProfile) else resolved
 
-    runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+    runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
     session = OutsideSession(
         provider,
         runtime,
@@ -207,15 +405,68 @@ async def outside_start_tool(
     )
     try:
         await session.open()
-        response = await session.call(prompt)
     except Exception:
         await provider.close()
         await session.close()
         raise
+
     session_id = str(uuid.uuid4())
     _SESSIONS[session_id] = session
     _SESSION_LOCKS[session_id] = asyncio.Lock()
-    return {"session_id": session_id, "response": response}
+
+    if await_response:
+        try:
+            response = await session.call(prompt)
+        except Exception:
+            del _SESSIONS[session_id]
+            del _SESSION_LOCKS[session_id]
+            await provider.close()
+            await session.close()
+            raise
+        return {"session_id": session_id, "response": response}
+    else:
+        # Fire prompt in background — caller uses outside_read to get response
+        task = asyncio.create_task(session.call(prompt))
+        _PENDING_RESPONSES[session_id] = task
+        return {"session_id": session_id, "status": "pending"}
+
+
+@mcp.tool(name="outside_read")
+async def outside_read_tool(
+    session_id: str,
+) -> dict:
+    """Read the pending response from a non-blocking outside_start call.
+
+    Blocks until the outside agent's response is ready, then returns it.
+    Only valid for sessions started with await_response=False.
+
+    Args:
+        session_id — UUID string returned by outside_start.
+
+    Returns:
+        Dict with "response" (str).
+
+    Raises:
+        ValueError: if session_id has no pending response.
+    """
+    task = _PENDING_RESPONSES.pop(session_id, None)
+    if task is None:
+        raise ValueError(
+            f"No pending response for session {session_id!r}. "
+            f"Either the session was started with await_response=True, "
+            f"or the response was already read."
+        )
+    try:
+        response = await task
+    except Exception:
+        # Clean up session on failure
+        session = _SESSIONS.pop(session_id, None)
+        _SESSION_LOCKS.pop(session_id, None)
+        if session:
+            await session._provider.close()
+            await session.close()
+        raise
+    return {"response": response}
 
 
 @mcp.tool(name="outside_reply")
@@ -274,6 +525,10 @@ async def outside_close_tool(
             f"Unknown session_id: {session_id!r}. "
             f"Session may have expired or server was restarted."
         )
+    # Cancel any pending background task
+    pending = _PENDING_RESPONSES.pop(session_id, None)
+    if pending and not pending.done():
+        pending.cancel()
     # Acquire lock BEFORE removing from registry to prevent reply/close race
     lock = _SESSION_LOCKS.get(session_id)
     if lock:
@@ -345,6 +600,7 @@ async def brainstorm_tool(
     backend: str | None = None,
     outside_agent: str | None = None,
     backends: list[str] | None = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Run the AgentCouncil deliberation protocol and return a consensus artifact.
 
@@ -381,15 +637,16 @@ async def brainstorm_tool(
     import time as _time
     _t0 = _time.time()
 
+    await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     # BP-01: Multi-agent Blind Panel mode
     if backends and len(backends) > 1:
         from agentcouncil.deliberation import brainstorm_panel
         # Build brief first
         if code_context is not None:
-            brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+            brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
             builder = BriefBuilder(adapter=brief_adapter)
             excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
             brief = builder.build(context, code_context=excerpts)
@@ -402,13 +659,13 @@ async def brainstorm_tool(
         try:
             for bk in backends:
                 provider = _make_provider(profile=bk)
-                runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+                runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
                 session = OutsideSession(provider, runtime, profile=bk)
                 await session.open()
                 outside_adapters.append(OutsideSessionAdapter(session))
                 sessions_to_close.append((provider, session))
 
-            synthesizer = ClaudeAdapter(model="opus", timeout=300)
+            synthesizer = ClaudeAdapter(model="opus", timeout=900)
             result = await brainstorm_panel(
                 brief=brief,
                 outside_adapters=outside_adapters,
@@ -426,7 +683,7 @@ async def brainstorm_tool(
 
     if code_context is not None:
         # Complex context with code — use BriefBuilder to extract structure.
-        brief_adapter = ClaudeAdapter(model="haiku", timeout=60)
+        brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
         builder = BriefBuilder(adapter=brief_adapter)
         excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
         brief = builder.build(context, code_context=excerpts)
@@ -450,7 +707,7 @@ async def brainstorm_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -485,7 +742,7 @@ async def brainstorm_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await brainstorm(
             brief=brief,
@@ -591,7 +848,7 @@ async def review_tool(
         _gate_model = None
     check_certification_gate("review", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     review_input = ReviewInput(
         artifact=artifact,
@@ -603,7 +860,7 @@ async def review_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -632,7 +889,7 @@ async def review_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await review(review_input, outside, lead, checkpoint_callback=_checkpoint_cb)
         result.transcript.meta = meta
@@ -683,7 +940,7 @@ async def decide_tool(
     _t0 = _time.time()
 
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     decide_options = [DecideOption(**opt) for opt in options]
     decide_input = DecideInput(
@@ -696,7 +953,7 @@ async def decide_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -725,7 +982,7 @@ async def decide_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await decide(decide_input, outside, lead)
         result.transcript.meta = meta
@@ -787,7 +1044,7 @@ async def challenge_tool(
         _gate_model = None
     check_certification_gate("challenge", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     challenge_input = ChallengeInput(
         artifact=artifact,
@@ -799,7 +1056,7 @@ async def challenge_tool(
 
     try:
         provider = _make_provider(profile=effective_backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
         session = OutsideSession(
@@ -828,7 +1085,7 @@ async def challenge_tool(
     except ValueError:
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
-        outside = resolve_outside_adapter(effective_backend, timeout=300)
+        outside = resolve_outside_adapter(effective_backend, timeout=900)
         meta = _build_meta(backend_str, "subprocess")
         result = await challenge(challenge_input, outside, lead)
         result.transcript.meta = meta
@@ -868,7 +1125,7 @@ async def outside_query_tool(
         provider = _make_provider(profile=outside_agent)
         resolved = ProfileLoader().resolve(profile_name=outside_agent)
         provider_name = resolved.provider if isinstance(resolved, BackendProfile) else resolved
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(
             provider, runtime,
             profile=outside_agent, model=None, provider_name=provider_name,
@@ -882,7 +1139,7 @@ async def outside_query_tool(
         return response + deprecation_notice
     except ValueError:
         # Legacy backend (unrecognised string) — fall back to adapter path
-        adapter = resolve_outside_adapter(outside_agent, timeout=300)
+        adapter = resolve_outside_adapter(outside_agent, timeout=900)
         return adapter.call(prompt) + deprecation_notice
 
 
@@ -989,6 +1246,97 @@ def _persist_journal(
         logging.warning("journal persist failed (non-fatal): %s", e)
 
 
+def _truncate_mcp_string(value: str, limit: int) -> tuple[str, bool]:
+    """Bound a string for MCP transport while preserving the leading context."""
+    if len(value) <= limit:
+        return value, False
+    suffix = f"... [truncated {len(value) - limit} chars]"
+    return value[: max(0, limit - len(suffix))] + suffix, True
+
+
+def _compact_review_loop_payload(payload: dict) -> dict:
+    """Trim review_loop MCP responses so large reviews still make it back."""
+    compact = json.loads(json.dumps(payload))
+    truncated = False
+
+    findings = compact.get("final_findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            for field, limit in _MCP_REVIEW_LOOP_FIELD_LIMITS.items():
+                value = finding.get(field)
+                if isinstance(value, str):
+                    finding[field], changed = _truncate_mcp_string(value, limit)
+                    truncated = truncated or changed
+            locations = finding.get("locations")
+            if isinstance(locations, list) and len(locations) > 8:
+                finding["locations"] = locations[:8]
+                truncated = True
+            source_refs = finding.get("source_refs")
+            if isinstance(source_refs, list) and len(source_refs) > 6:
+                finding["source_refs"] = source_refs[:6]
+                truncated = True
+
+        if len(findings) > _MCP_REVIEW_LOOP_FINDINGS_LIMIT:
+            compact["final_findings"] = findings[:_MCP_REVIEW_LOOP_FINDINGS_LIMIT]
+            compact["omitted_findings_count"] = (
+                len(findings) - _MCP_REVIEW_LOOP_FINDINGS_LIMIT
+            )
+            truncated = True
+
+    serialized = json.dumps(compact, ensure_ascii=False)
+    if len(serialized) > _MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET:
+        trimmed_findings: list[dict] = []
+        for finding in compact.get("final_findings", []):
+            trial = dict(compact)
+            candidate = trimmed_findings + [finding]
+            trial["final_findings"] = candidate
+            if len(json.dumps(trial, ensure_ascii=False)) > _MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET:
+                break
+            trimmed_findings = candidate
+
+        omitted = len(compact.get("final_findings", [])) - len(trimmed_findings)
+        compact["final_findings"] = trimmed_findings
+        if omitted > 0:
+            compact["omitted_findings_count"] = compact.get("omitted_findings_count", 0) + omitted
+            truncated = True
+
+    if truncated:
+        compact["response_truncated"] = True
+    return compact
+
+
+async def _close_review_loop_resources(
+    provider: OutsideProvider,
+    session: OutsideSession,
+) -> None:
+    """Best-effort cleanup that never blocks the tool response indefinitely."""
+    try:
+        await asyncio.wait_for(
+            provider.close(), timeout=_SESSION_CLOSE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "review_loop: provider.close() timed out after %.1fs",
+            _SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        log.exception("review_loop: provider.close() failed during cleanup")
+
+    try:
+        await asyncio.wait_for(
+            session.close(), timeout=_SESSION_CLOSE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "review_loop: session.close() timed out after %.1fs",
+            _SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        log.exception("review_loop: session.close() failed during cleanup")
+
+
 @mcp.tool(name="protocol_resume")
 async def protocol_resume_tool(
     session_id: str,
@@ -1013,11 +1361,11 @@ async def protocol_resume_tool(
     """
     from agentcouncil.workflow import resume_protocol
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     try:
         provider = _make_provider(profile=profile, model=model)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=profile, model=model)
         await session.open()
         try:
@@ -1028,7 +1376,7 @@ async def protocol_resume_tool(
             await session.close()
     except ValueError:
         backend_str = resolve_outside_backend(profile)
-        outside = resolve_outside_adapter(profile, timeout=300)
+        outside = resolve_outside_adapter(profile, timeout=900)
         result = await resume_protocol(session_id, outside, lead)
 
     return result.model_dump()
@@ -1042,29 +1390,43 @@ async def review_loop_tool(
     focus_areas: list[str] | None = None,
     max_iterations: int = 3,
     backend: str | None = None,
+    file_paths: list[str] | None = None,
+    prior_review_context: str | None = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
 
     Reviews the artifact, tracks findings, and loops through fix/re-review
     cycles until all findings are verified or max iterations reached.
 
+    When file_paths is provided and the backend has native workspace access,
+    agents read the files directly instead of receiving embedded content.
+
     Args:
-        artifact: Text content to review.
+        artifact: Text content to review (fallback when backend lacks workspace access).
         artifact_type: Type (code, design, plan, document, other).
         review_objective: Optional review focus.
         focus_areas: Optional specific areas.
         max_iterations: Maximum iterations (default 3, hard cap 10).
         backend: Backend profile for the outside reviewer.
+        file_paths: File paths for native-access backends to read directly.
+        prior_review_context: Findings from a prior review cycle. Pass on revision
+            retries so the reviewer can verify whether prior issues were resolved
+            and flag any new issues introduced by the revision.
     """
     import time as _time
 
+    await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     from agentcouncil.convergence import review_loop
 
-    lead = ClaudeAdapter(model="opus", timeout=300)
+    lead = ClaudeAdapter(model="opus", timeout=900)
 
     try:
         provider = _make_provider(profile=backend)
-        runtime = OutsideRuntime(provider, workspace=str(Path.cwd()))
+        ws_access = provider.workspace_access
+        log.warning("review_loop: provider=%s, workspace_access=%s, workspace=%s, backend=%r",
+                     type(provider).__name__, ws_access, _get_workspace_sync(), backend)
+        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         session = OutsideSession(provider, runtime, profile=backend)
         await session.open()
         try:
@@ -1077,23 +1439,67 @@ async def review_loop_tool(
                 review_objective=review_objective,
                 focus_areas=focus_areas,
                 max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access=ws_access,
+                prior_review_context=prior_review_context,
             )
         finally:
-            await provider.close()
-            await session.close()
-    except ValueError:
-        outside = resolve_outside_adapter(backend, timeout=300)
-        result = await review_loop(
-            artifact=artifact,
-            artifact_type=artifact_type,
-            outside_adapter=outside,
-            lead_adapter=lead,
-            review_objective=review_objective,
-            focus_areas=focus_areas,
-            max_iterations=max_iterations,
+            await _close_review_loop_resources(provider, session)
+    except (ValueError, ProviderError) as exc:
+        log.warning(
+            "review_loop: provider-backed path failed (%s), falling back to legacy adapter",
+            exc,
         )
+        try:
+            outside = resolve_outside_adapter(backend, timeout=900)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access="none",  # fallback path — unknown capability
+                prior_review_context=prior_review_context,
+            )
+        except Exception as fallback_exc:
+            log.exception(
+                "review_loop: legacy fallback failed after provider-backed failure"
+            )
+            raise RuntimeError(
+                "review_loop failed during provider-backed execution "
+                f"({exc}) and legacy fallback ({fallback_exc})"
+            ) from fallback_exc
+    except Exception as exc:
+        log.exception(
+            "review_loop: unexpected provider-backed failure, falling back to legacy adapter"
+        )
+        try:
+            outside = resolve_outside_adapter(backend, timeout=900)
+            result = await review_loop(
+                artifact=artifact,
+                artifact_type=artifact_type,
+                outside_adapter=outside,
+                lead_adapter=lead,
+                review_objective=review_objective,
+                focus_areas=focus_areas,
+                max_iterations=max_iterations,
+                file_paths=file_paths,
+                workspace_access="none",  # fallback path — unknown capability
+                prior_review_context=prior_review_context,
+            )
+        except Exception as fallback_exc:
+            log.exception(
+                "review_loop: legacy fallback failed after unexpected provider-backed failure"
+            )
+            raise RuntimeError(
+                "review_loop failed during provider-backed execution "
+                f"({exc}) and legacy fallback ({fallback_exc})"
+            ) from fallback_exc
 
-    return result.model_dump()
+    return _compact_review_loop_payload(result.model_dump())
 
 
 @mcp.tool(name="journal_stream")
@@ -1151,6 +1557,241 @@ def journal_get_tool(session_id: str) -> dict:
     from agentcouncil.journal import read_entry
 
     return read_entry(session_id).model_dump()
+
+
+@mcp.tool(name="autopilot_prepare")
+def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str,
+                            requirements: list[str], acceptance_criteria: list[str],
+                            tier: int = 2, target_files: list[str] | None = None,
+                            escalation_level: str = "normal",
+                            review_backend: str | None = None,
+                            challenge_backend: str | None = None) -> dict:
+    """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
+
+    Call this before autopilot_start. Returns a run_id to use with other tools.
+    Applies SAFE-03 rule-based tier classification from target_files before execution begins.
+    """
+    import time as _time
+    import uuid as _uuid
+
+    target_files = target_files or []
+    # Clamp tier to valid range (FM-06: unconstrained tier escapes challenge gating)
+    tier = max(1, min(3, tier))
+    # Validate spec via SpecArtifact model (include target_files for SAFE-03 classification)
+    spec = SpecArtifact(spec_id=spec_id, title=title, objective=objective,
+                        requirements=requirements, acceptance_criteria=acceptance_criteria,
+                        target_files=target_files)
+
+    # SAFE-03: Classify run tier from target_files before execution begins.
+    # classify_run only promotes, never demotes — requested tier is respected.
+    computed_tier, tier_reason = classify_run(spec, requested_tier=tier)
+
+    run_id = f"run-{_uuid.uuid4().hex[:12]}"
+    stages = [
+        StageCheckpoint(stage_name=name, status="pending")
+        for name in ["spec_prep", "plan", "build", "verify", "ship"]
+    ]
+    run = AutopilotRun(
+        run_id=run_id, spec_id=spec_id, status="running",
+        current_stage="spec_prep", tier=computed_tier,
+        execution_mode="skill",
+        review_backend=review_backend,
+        challenge_backend=challenge_backend or review_backend,
+        protocol_step="spec_prep_started",
+        next_required_action="Write docs/autopilot/active-run.json via autopilot_checkpoint, then run the spec review gate.",
+        required_tool="autopilot_checkpoint",
+        tier_classification_reason=tier_reason,
+        spec_target_files=target_files,
+        stages=stages,
+        escalation_level=escalation_level,
+        started_at=_time.time(), updated_at=_time.time(),
+    )
+    run.resume_prompt = build_resume_prompt(run)
+    persist(run)
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "current_stage": run.current_stage,
+        "tier": run.tier,
+        "tier_classification_reason": run.tier_classification_reason,
+        "protocol_step": run.protocol_step,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "resume_prompt": run.resume_prompt,
+    }
+
+
+def _make_autopilot_orchestrator(
+    registry: dict | None = None,
+    gate_backend: str | None = None,
+    challenge_backend: str | None = None,
+) -> LinearOrchestrator:
+    """Create a LinearOrchestrator with real runners and optional gate executor.
+
+    Gate execution through real protocol sessions is enabled when
+    AGENTCOUNCIL_AUTOPILOT_GATES=1 is set. Otherwise, stub gates
+    auto-advance (preserving backward compatibility).
+    """
+    if registry is None:
+        registry = load_default_registry()
+
+    # Gate executor is opt-in: set AGENTCOUNCIL_AUTOPILOT_GATES=1 to enable
+    gate_executor: GateExecutor | None = None
+    if os.environ.get("AGENTCOUNCIL_AUTOPILOT_GATES") == "1":
+        gate_executor = GateExecutor(backend=gate_backend, challenge_backend=challenge_backend)
+
+    return LinearOrchestrator(
+        registry=registry,
+        runners={
+            "spec_prep": run_spec_prep,
+            "plan": run_plan,
+            "build": run_build,
+            "verify": run_verify,
+            "ship": run_ship,
+        },
+        gate_executor=gate_executor,
+    )
+
+
+@mcp.tool(name="autopilot_start")
+def autopilot_start_tool(run_id: str) -> dict:
+    """Execute the full autopilot pipeline from current stage.
+
+    The run must have been created via autopilot_prepare first.
+    Returns the final run state. Uses real runners for all stages and
+    real protocol sessions for gate execution when a backend is available.
+    """
+    run = load_run(run_id)
+    if run.status == "completed":
+        return {"run_id": run.run_id, "status": run.status, "message": "Run already completed"}
+
+    orchestrator = _make_autopilot_orchestrator(
+        gate_backend=run.review_backend,
+        challenge_backend=run.challenge_backend,
+    )
+    result = orchestrator.run_pipeline(run)
+    return {
+        "run_id": result.run_id, "status": result.status,
+        "current_stage": result.current_stage,
+        "completed_at": result.completed_at,
+        "stages": [{"stage": s.stage_name, "status": s.status} for s in result.stages],
+    }
+
+
+@mcp.tool(name="autopilot_status")
+def autopilot_status_tool(run_id: str) -> dict:
+    """Return the current state of an autopilot run."""
+    run = load_run(run_id)
+    return {
+        "run_id": run.run_id, "status": run.status,
+        "current_stage": run.current_stage, "tier": run.tier,
+        "execution_mode": run.execution_mode,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
+        "protocol_step": run.protocol_step,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "blocking_reason": run.blocking_reason,
+        "resume_prompt": run.resume_prompt or build_resume_prompt(run),
+        "artifact_refs": run.artifact_refs,
+        "workspace_path": run.workspace_path,
+        "active_state_path": run.active_state_path,
+        "stages": [{"stage": s.stage_name, "status": s.status,
+                     "gate_decision": s.gate_decision} for s in run.stages],
+        "failure_reason": run.failure_reason,
+    }
+
+
+@mcp.tool(name="autopilot_checkpoint")
+def autopilot_checkpoint_tool(
+    run_id: str,
+    protocol_step: str,
+    next_required_action: str | None = None,
+    required_tool: str | None = None,
+    blocking_reason: str | None = None,
+    artifact_refs: dict[str, str] | None = None,
+    stage: str | None = None,
+    stage_status: str | None = None,
+    gate_decision: str | None = None,
+    revision_guidance: str | None = None,
+    note: str | None = None,
+    workspace_path: str | None = None,
+    review_backend: str | None = None,
+    challenge_backend: str | None = None,
+) -> dict:
+    """Record durable `/autopilot` protocol progress.
+
+    This is the manual skill-path checkpoint tool. It keeps the global run file
+    in sync and writes a project-local guard at docs/autopilot/active-run.json
+    plus docs/autopilot/runs/{run_id}/state.json so resumed agents know the
+    next mandatory gate or stage.
+    """
+    allowed_stage_status = {None, "pending", "in_progress", "gated", "advanced", "blocked", "skipped"}
+    if stage_status not in allowed_stage_status:
+        raise ValueError(
+            f"invalid stage_status: {stage_status!r}; expected one of "
+            f"{sorted(s for s in allowed_stage_status if s is not None)}"
+        )
+    workspace = workspace_path or _resolve_workspace_sync()
+    run = checkpoint_run(
+        run_id,
+        protocol_step=protocol_step,
+        next_required_action=next_required_action,
+        required_tool=required_tool,
+        blocking_reason=blocking_reason,
+        artifact_refs=artifact_refs,
+        stage=stage,
+        stage_status=stage_status,  # type: ignore[arg-type]
+        gate_decision=gate_decision,
+        revision_guidance=revision_guidance,
+        note=note,
+        workspace_path=workspace,
+        execution_mode="skill",
+        review_backend=review_backend,
+        challenge_backend=challenge_backend,
+    )
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "current_stage": run.current_stage,
+        "protocol_step": run.protocol_step,
+        "review_backend": run.review_backend,
+        "challenge_backend": run.challenge_backend,
+        "next_required_action": run.next_required_action,
+        "required_tool": run.required_tool,
+        "blocking_reason": run.blocking_reason,
+        "resume_prompt": run.resume_prompt,
+        "artifact_refs": run.artifact_refs,
+        "active_state_path": run.active_state_path,
+    }
+
+
+@mcp.tool(name="autopilot_resume")
+def autopilot_resume_tool(run_id: str) -> dict:
+    """Resume a paused autopilot run from the blocked stage.
+
+    Only works for runs with status=paused_for_approval or paused_for_revision.
+    """
+    run, artifact_reg = resume(run_id)
+    # resume() has already validated the run is in a paused state.
+    # Paused states are sinks in the state machine (no outgoing transitions
+    # via validate_transition), so we bypass the transition check here and
+    # directly reset to "running" for orchestrator re-entry.
+    run.status = "running"
+    persist(run)
+
+    orchestrator = _make_autopilot_orchestrator(
+        gate_backend=run.review_backend,
+        challenge_backend=run.challenge_backend,
+    )
+    result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
+    return {
+        "run_id": result.run_id, "status": result.status,
+        "current_stage": result.current_stage,
+        "stages": [{"stage": s.stage_name, "status": s.status} for s in result.stages],
+    }
 
 
 if __name__ == "__main__":

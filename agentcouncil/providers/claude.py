@@ -37,7 +37,7 @@ __all__ = ["ClaudeProvider"]
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT = 300.0  # seconds
+_DEFAULT_TIMEOUT = 900.0  # seconds
 
 
 class ClaudeProvider(OutsideProvider):
@@ -45,7 +45,7 @@ class ClaudeProvider(OutsideProvider):
 
     Args:
         model      -- Model to use (e.g. "sonnet", "opus"). None uses CLI default.
-        timeout    -- Seconds to wait for the subprocess to complete (default: 300).
+        timeout    -- Seconds to wait for the subprocess to complete (default: 900).
         session_id -- Explicit session ID string. If None, a UUID is generated at
                       init time and reused across all chat_complete calls (UPROV-02).
 
@@ -64,11 +64,13 @@ class ClaudeProvider(OutsideProvider):
         model: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
         session_id: str | None = None,
+        cwd: str | None = None,
     ) -> None:
         self._model = model
         self._timeout = timeout
         self._session_id = session_id or str(uuid.uuid4())
         self._first_call = True  # First call uses --session-id, subsequent use --resume
+        self._cwd = cwd
 
     async def auth_check(self) -> None:
         """Verify claude CLI is on PATH."""
@@ -115,6 +117,7 @@ class ClaudeProvider(OutsideProvider):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self._cwd,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=last_msg.encode()),

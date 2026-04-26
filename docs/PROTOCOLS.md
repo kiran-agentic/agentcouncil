@@ -1,6 +1,6 @@
 # Protocols
 
-AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for iterative workflows, multi-agent panels, and specialist consultation. Each protocol convenes Claude Code (the orchestrator, referred to as "Claude" below) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other providers).
+AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for iterative workflows, multi-agent panels, and specialist consultation. Each protocol convenes Claude Code (the orchestrator, referred to as "Claude" below) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other built-in providers). Protocols also serve as stage gates in the v2.0 Autopilot pipeline, where the GateNormalizer translates protocol verdicts into advance/revise/block decisions.
 
 ## Quick Chooser
 
@@ -12,6 +12,7 @@ AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for i
 | "Will this break?" | **challenge** |
 | "Fix until clean" | `review_loop` MCP tool (convergence loop) |
 | "Get N perspectives" | **brainstorm** with `backends=` (Blind Panel) |
+| "Build this with council gates" | **`/autopilot`** skill |
 
 ## Protocol Comparison
 
@@ -192,3 +193,39 @@ But each works standalone:
 - Got a plan to ship? **challenge**
 - Want N perspectives? **brainstorm** with `backends=`
 - Want to look back? **inspect**
+
+## Protocols as Autopilot Gates
+
+The v2.0 Autopilot pipeline is designed to use protocols as stage gates. Each stage's manifest declares which protocol type serves as its gate (e.g., `plan` uses `review_loop`, `verify` uses `challenge`). After a stage completes, the orchestrator creates a gate artifact and feeds it through the `GateNormalizer` to produce an advance/revise/block decision.
+
+For most users, the best way to exercise this in Claude Code is the **`/autopilot` skill**, which uses AgentCouncil's review and challenge tools as governance checkpoints while Claude performs the actual implementation work.
+
+### GateNormalizer Mapping
+
+The normalizer translates protocol-specific verdicts into uniform gate decisions:
+
+| Protocol | advance | revise | block |
+|----------|---------|--------|-------|
+| brainstorm | consensus, consensus_with_reservations | — | all other verdicts |
+| review | pass | revise | escalate |
+| review_loop | pass | revise | escalate |
+| challenge | ready | needs_hardening | not_ready |
+| decide | decided | experiment | deferred |
+
+### Gate-per-Stage Assignment
+
+| Stage | Gate Protocol | When it runs |
+|-------|---------------|-------------|
+| spec_prep | none | Always advances |
+| plan | review_loop | After plan artifact produced |
+| build | review_loop | After build artifact produced |
+| verify | challenge | Conditional — only when `tier >= 3` or `verify.side_effect_level == "external"` |
+| ship | none | Always advances |
+
+### Backend Selection
+
+The `/autopilot` skill supports `backend=<profile>` for all `review_loop` gates and `challenge_backend=<profile>` for the conditional `challenge` gate. These select the outside reviewer/attacker model via named backend profiles. Non-gate stages run on the active Claude Code lead model.
+
+### Current Limitations
+
+The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level Claude Code skill, and the `plan` and `build` runners are still evolving. Real typed-pipeline gate execution is available only when `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise it uses stub gate artifacts for compatibility. Use the `/autopilot` skill for the clearest end-to-end experience today.

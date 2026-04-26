@@ -1,6 +1,6 @@
 [project]
 name = "agentcouncil"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-agent deliberation protocols for AI coding assistants. Independence before convergence."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -21,6 +21,7 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "fastmcp>=3.2.3",
     "rich>=13.0",
+    "pyyaml>=6.0",
 ]
 
 [project.urls]
@@ -56,6 +57,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["agentcouncil*"]
+
+[tool.setuptools.package-data]
+agentcouncil = ["autopilot/workflows/**/*.yaml", "autopilot/workflows/**/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

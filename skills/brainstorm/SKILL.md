@@ -1,7 +1,7 @@
 ---
 name: brainstorm
 description: Run the AgentCouncil deliberation protocol. You (Claude) act as orchestrator AND lead agent. An independent outside agent provides a second perspective via the AgentCouncil session API. Use when you want genuinely independent perspectives before converging on a decision.
-allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
+allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_read mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [topic or question to brainstorm]
 ---
 
@@ -29,15 +29,7 @@ Save `workspace_access` from the response. This determines how to construct prom
 
 Clearly state what needs to be decided and why it matters. This frames the deliberation for both agents and the user.
 
-### Step 2: Write YOUR proposal first
-
-Before the outside agent sees anything, write your own independent proposal. You have the full conversation context — use it. Be specific and opinionated.
-
-Display it clearly labeled as **Claude's proposal**.
-
-**This step is critical.** If you see the outside agent's thinking before writing your own, the independence is gone and the whole protocol is worthless.
-
-### Step 3: Create the brief and send to the outside agent
+### Step 2: Create the brief and send to outside agent FIRST
 
 Write a neutral brief containing ONLY:
 - Problem statement
@@ -46,21 +38,33 @@ Write a neutral brief containing ONLY:
 - Goals
 - Open questions
 
-**CRITICAL:** Do NOT include your proposal, opinion, or any direction. The brief must be clean.
+**CRITICAL:** Do NOT include any proposal, opinion, or direction. The brief must be clean.
 
 For prompt construction:
-- If `workspace_access` is `"native"`: include file paths in the brief for the outside agent to read.
+- If `workspace_access` is `"native"`: include file paths in the brief for the outside agent to read. Add this hint at the end of the brief: "If you have access to code navigation tools (e.g. serena, codegraph), use them to understand the codebase structure before forming your proposal."
 - If `workspace_access` is `"assisted"` or `"none"`: read the relevant files yourself and include their contents in the brief.
 
-Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text and `profile` set to the backend argument (or omit `profile` for default). Save `session_id` from the response.
+Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text, `profile` set to the backend argument (or omit `profile` for default), and `await_response` set to `false`. This fires the brief to the outside agent and returns immediately with `session_id` and `status: "pending"`. The outside agent is now working on its proposal in the background.
 
-### Step 4: Share your proposal with the outside agent
+### Step 3: Write YOUR proposal (parallel with outside agent)
 
-Send your full independent proposal so the outside agent can compare both views.
+The outside agent is processing the brief in the background. Write your own independent proposal NOW — do not wait. You have the full conversation context — use it. Be specific and opinionated.
+
+Display it clearly labeled as **Claude's proposal**.
+
+**Independence is preserved** because the brief was neutral (no opinion) and you have not read the outside agent's response yet. Both agents think independently.
+
+### Step 4: Read outside agent's proposal and share yours
+
+Call `mcp__agentcouncil__outside_read` with the saved `session_id` to fetch the outside agent's response (this blocks until ready, but the agent has been working since Step 2).
+
+Display it clearly labeled as **Outside agent's proposal**.
+
+Then send your full proposal so the outside agent can compare both views.
 
 Call `mcp__agentcouncil__outside_reply` with the saved `session_id` and this prompt:
 
-"Here is the lead agent's independent proposal (written before seeing yours): {your full proposal from Step 2}. Compare it with your own proposal. Where do you agree? Where do you disagree? Push back where you think the lead is wrong."
+"Here is the lead agent's independent proposal (written before seeing yours): {your full proposal from Step 3}. Compare it with your own proposal. Where do you agree? Where do you disagree? Push back where you think the lead is wrong."
 
 ### Step 5: Compare proposals
 
@@ -119,7 +123,8 @@ Call `mcp__agentcouncil__outside_close` with the saved `session_id`.
 ## Rules
 
 - Default to 1 round unless the user asks for more
-- ALWAYS write your proposal BEFORE sending anything to the outside agent
+- ALWAYS send the brief FIRST so the outside agent starts immediately
+- Write your proposal AFTER sending the brief but BEFORE reading the response
 - NEVER put your opinion in the brief
 - Always call `outside_close` after the final synthesis response
 - The session layer handles history management — just send the new message each turn

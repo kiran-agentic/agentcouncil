@@ -1,0 +1,17 @@
+stage_name: ship
+version: "1.0"
+stage_type: work
+input_artifact: VerifyArtifact
+output_artifact: ShipArtifact
+default_gate: none
+side_effect_level: local
+retry_policy: none
+approval_required: false
+allowed_next: []
+source_provenance:
+  repo: https://github.com/addyosmani/agent-skills
+  path: skills/shipping-and-launch/SKILL.md
+  license: MIT
+  commit: bf2fa6994407c9c888fc19a03fd54957991cfa0e
+  date_copied: "2026-04-15"
+  modified: true

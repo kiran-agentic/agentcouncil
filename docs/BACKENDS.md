@@ -346,6 +346,37 @@ Session strategy determines how conversation history is managed between the sess
 
 Persistent providers are more token-efficient for multi-turn deliberations. Replay providers work with any stateless HTTP endpoint but resend the full conversation each turn.
 
+## Autopilot Gate Backends
+
+The `/autopilot` skill accepts gate backend overrides:
+
+```text
+/autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging
+```
+
+- `backend=<profile>` selects the outside reviewer backend for every `review_loop` gate.
+- `challenge_backend=<profile>` selects the outside attacker backend for the `challenge` gate.
+- If `challenge_backend` is omitted, it defaults to `backend`.
+- If both are omitted, AgentCouncil uses the configured default profile.
+
+Model selection is done through named profiles. Put the model in `.agentcouncil.json` or `~/.agentcouncil.json`, then reference the profile by name:
+
+```json
+{
+  "profiles": {
+    "openrouter-gpt": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o",
+      "api_key_env": "OPENROUTER_API_KEY"
+    }
+  }
+}
+```
+
+The normal `/autopilot` spec, plan, build, verify, and ship steps run on the active Claude Code lead model. AgentCouncil only selects models for the independent review/challenge gate sessions.
+
+The lower-level `autopilot_prepare` tool also stores `review_backend` and `challenge_backend` in run state. When `AGENTCOUNCIL_AUTOPILOT_GATES=1` enables real gate execution for the typed MCP pipeline, `autopilot_start` and `autopilot_resume` use those stored gate backends. Without that flag, the typed pipeline continues to use stub gate artifacts for compatibility.
+
 ## Conformance Certification
 
 Before using a model for review or challenge, AgentCouncil checks whether it has been certified to support function calling (tool use).
@@ -357,6 +388,8 @@ Before using a model for review or challenge, AgentCouncil checks whether it has
 Certification is done by `ConformanceCertifier` and results are cached in `~/.agentcouncil/certifications.json`. A model is checked the first time it is used for a gated protocol; the result is cached and reused on subsequent calls.
 
 Certification happens automatically on first use of a gated protocol — no manual step needed. Stale certifications (from an older AgentCouncil version) warn to stderr but do not block execution — they are re-certified automatically.
+
+> **Note:** Conformance certification applies to protocol tools (brainstorm, review, decide, challenge), not autopilot gates. Autopilot gates currently use stub artifacts and do not invoke backend protocol sessions.
 
 ## Auto-Fallback
 

@@ -25,6 +25,17 @@ __all__ = ["review"]
 # Prompt templates
 # ---------------------------------------------------------------------------
 
+_TOOL_HINT = (
+    "## Tool Usage\n"
+    "If tools under the `mcp__serena__*` namespace are available: activate "
+    "the current project with Serena and read initial instructions before "
+    "analyzing. Then prefer symbol-level tools (`find_symbol`, "
+    "`get_symbols_overview`, `find_referencing_symbols`) over text search "
+    "(`Grep`) for locating definitions and usages — they are faster and more "
+    "precise. Fall back to `Grep`/`Read` only for text patterns that aren't "
+    "symbol lookups."
+)
+
 REVIEW_INPUT_PROMPT = """\
 You are reviewing an artifact. Analyze it independently and produce your findings.
 
@@ -34,6 +45,7 @@ You are reviewing an artifact. Analyze it independently and produce your finding
 
 {objective_section}
 {focus_section}
+{prior_context_section}
 
 Produce an independent review. For each finding, state:
 - What the issue is
@@ -42,11 +54,40 @@ Produce an independent review. For each finding, state:
 - Evidence from the artifact
 - Your confidence level (high/medium/low)
 
+{tool_hint}
+
+Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
+
+REVIEW_INPUT_PROMPT_PATHS = """\
+You are reviewing an artifact. Read the files listed below, then analyze independently and produce your findings.
+
+## Artifact ({artifact_type})
+
+Read these files:
+{file_list}
+
+{objective_section}
+{focus_section}
+{prior_context_section}
+
+Produce an independent review. For each finding, state:
+- What the issue is
+- Its severity (critical/high/medium/low)
+- Its impact on the system
+- Evidence from the artifact (reference file paths and line numbers)
+- Your confidence level (high/medium/low)
+
+{tool_hint}
+
 Be evaluative only: describe impact, do NOT suggest fixes or implementation changes."""
 
 
-def _build_input_prompt(ri: ReviewInput) -> str:
-    """Build the factual input prompt from ReviewInput (REV-10: no opinion)."""
+def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
+    """Build the factual input prompt from ReviewInput (REV-10: no opinion).
+
+    When workspace_access is "native" and file_paths are provided, builds a
+    path-reference prompt instead of embedding artifact content.
+    """
     objective_section = ""
     if ri.review_objective:
         objective_section = f"## Review Objective\n{ri.review_objective}"
@@ -56,11 +97,34 @@ def _build_input_prompt(ri: ReviewInput) -> str:
         items = "\n".join(f"- {area}" for area in ri.focus_areas)
         focus_section = f"## Focus Areas\n{items}"
 
+    prior_context_section = ""
+    if ri.prior_review_context:
+        prior_context_section = (
+            "## Prior Review Context\n"
+            "This artifact is a revision. The prior review produced the findings below. "
+            "Verify each one: is it resolved by this revision, still present, or newly regressed? "
+            "Also flag any NEW issues introduced by the revision itself.\n\n"
+            f"{ri.prior_review_context}"
+        )
+
+    if workspace_access == "native" and ri.file_paths:
+        file_list = "\n".join(f"- {p}" for p in ri.file_paths)
+        return REVIEW_INPUT_PROMPT_PATHS.format(
+            artifact_type=ri.artifact_type,
+            file_list=file_list,
+            objective_section=objective_section,
+            focus_section=focus_section,
+            prior_context_section=prior_context_section,
+            tool_hint=_TOOL_HINT,
+        )
+
     return REVIEW_INPUT_PROMPT.format(
         artifact_type=ri.artifact_type,
         artifact=ri.artifact,
         objective_section=objective_section,
         focus_section=focus_section,
+        prior_context_section=prior_context_section,
+        tool_hint=_TOOL_HINT,
     )
 
 
@@ -131,6 +195,7 @@ async def review(
     on_event: Optional[OnEvent] = None,
     outside_meta: Optional[TranscriptMeta] = None,
     checkpoint_callback: Optional[OnEvent] = None,
+    workspace_access: str = "none",
 ) -> DeliberationResult:
     """Run the review deliberation protocol.
 
@@ -139,20 +204,25 @@ async def review(
         outside_adapter: AgentAdapter for the independent outside reviewer.
         lead_adapter: AgentAdapter for the lead reviewer.
         on_event: Optional event callback for progress tracking.
+        workspace_access: Backend workspace capability ("native", "assisted", "none").
+            When "native" and file_paths are set, prompts reference paths instead of
+            embedding content.
 
     Returns:
         DeliberationResult[ReviewArtifact] with verdict, findings, strengths,
         open_questions, next_action.
 
     Raises:
-        ValueError: If review_input.artifact is empty.
+        ValueError: If review_input.artifact is empty and no file_paths provided.
     """
     # Validate input before any adapter calls
-    if not review_input.artifact or not review_input.artifact.strip():
-        raise ValueError("artifact must not be empty")
+    has_content = review_input.artifact and review_input.artifact.strip()
+    has_paths = bool(review_input.file_paths)
+    if not has_content and not has_paths:
+        raise ValueError("artifact must not be empty (or provide file_paths)")
 
     # Build factual input prompt (REV-10: no opinion)
-    input_prompt = _build_input_prompt(review_input)
+    input_prompt = _build_input_prompt(review_input, workspace_access=workspace_access)
 
     # Run dual-independent deliberation with ReviewArtifact
     return await run_deliberation(

@@ -1,0 +1,11 @@
+stage_name: spec_prep
+version: "1.0"
+stage_type: work
+input_artifact: null
+output_artifact: SpecPrepArtifact
+default_gate: none
+side_effect_level: none
+retry_policy: none
+approval_required: false
+allowed_next:
+  - plan

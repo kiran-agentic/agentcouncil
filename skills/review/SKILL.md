@@ -1,7 +1,7 @@
 ---
 name: review
 description: Run the AgentCouncil review protocol. You (Claude) frame the review question and direct the outside agent to the right files. The outside agent reviews independently. Use when work is done and you want independent critique. Supports --loop for iterative convergence (fix → re-review → verify until clean).
-allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info mcp__agentcouncil__review_loop
+allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [what to review — plan, implementation, milestone, design] [--loop to iterate until clean]
 ---
 
@@ -13,13 +13,13 @@ You are running the AgentCouncil review protocol. You are the orchestrator — t
 
 ## Mode Detection
 
-Parse the arguments for convergence mode. Use **iterative convergence** (review_loop) if ANY of these are true:
+Parse the arguments for convergence mode. Use **iterative convergence** if ANY of these are true:
 - The user included `--loop`, `--converge`, or `--iterate` in arguments
 - The user's request explicitly asks for iterative behavior: "fix until clean", "keep reviewing", "iterate until no findings", "review and fix", "repeat until pass"
 
-Otherwise, use **one-shot review** (the default protocol below).
+Otherwise, use **one-shot review** (Steps 0–5 below).
 
-**If convergence mode is detected:** Call the `mcp__agentcouncil__review_loop` MCP tool with the artifact content, artifact_type, and max_iterations (default 3). Present the ConvergenceResult showing iteration history, finding statuses, exit reason, and final verdict. Skip the one-shot protocol steps below.
+If convergence mode is detected, follow Steps 0–2 for the first pass, then switch to the **Convergence Loop** protocol (at the bottom of this file) instead of Steps 3–5.
 
 ## Backend Selection
 
@@ -53,7 +53,7 @@ Construct a review request that tells the reviewer:
 - What question to answer (completeness? feasibility? security? correctness?)
 - Focus areas and key concerns
 
-If `workspace_access` is `"native"`: include file paths in the prompt — the outside agent can read them directly. Do NOT dump file contents.
+If `workspace_access` is `"native"`: include file paths in the prompt — the outside agent can read them directly. Do NOT dump file contents. Add this hint at the end of the review request: "If you have access to code navigation tools (e.g. serena, codegraph), use them to trace dependencies, callers, and related code before reviewing."
 
 If `workspace_access` is `"assisted"` or `"none"`: read the relevant files yourself and include their contents in the prompt — the outside agent cannot access the workspace.
 
@@ -116,6 +116,81 @@ Do NOT show this hint if:
 - The verdict is `pass`
 - There are no confirmed findings
 - The user already used `--loop` mode
+
+## Convergence Loop (used when `--loop` is detected)
+
+You orchestrate the loop in this session. YOU are the lead — you edit the files between iterations using Read/Edit/Grep. The outside agent is the verifier: each iteration it re-reads the current state of the artifact and updates finding statuses.
+
+### Loop parameters
+
+- `max_iterations`: default `3`, hard cap `10`. Parse from arguments if the user passed `iterations=N`; otherwise use `3`.
+- One **iteration** = (outside assesses current state) → (you apply edits). Clarifying back-and-forth with the outside agent WITHIN an iteration is not counted — only the full fix-cycles are bounded.
+- A finding's status is one of: `open` (still present), `fixed` (reviewer confirms resolved this iteration), `verified` (fixed in a prior iteration and still gone), `reopened` (was fixed, now present again), `wont_fix` (you marked it intentional).
+
+### Loop protocol
+
+**Iteration 1 (first pass):**
+1. Do Step 0 (backend capabilities) and Step 1 (gather context, frame the question) as in one-shot mode.
+2. Do Step 2 but append this clause to the review request:
+   > Return findings as JSON with these exact keys: `findings` (array of `{id, title, severity, impact, description, evidence, locations, confidence}`), `summary` (string), `verdict` (pass/revise/escalate). Use stable IDs (F1, F2, ...) — I'll reference them in follow-up.
+3. Call `outside_start` and save `session_id`. Parse the JSON findings.
+4. Display the findings to the user, grouped by severity. Ask no questions — present the list.
+5. Go to **Edit and verify** below.
+
+**Edit and verify (runs at the end of each iteration except the last):**
+1. For each finding you agree with: apply the fix using your own tools (Read, Edit, Grep, Bash). For findings you dispute, mark them `wont_fix` internally with a one-line rationale.
+2. **Intra-iteration dialogue (optional, unbounded):** if a finding is ambiguous — wrong file, unclear location, disputed evidence — call `outside_reply` with a clarifying question first. These exchanges don't count toward `max_iterations`. Examples: "F3 cites lines 84–98 but that range is empty — did you mean a different section?" or "F5 says 'conflated invariants' — which invariant specifically?" Resolve ambiguity before editing.
+3. Summarize what you changed, in one paragraph per finding. Keep it concrete: file paths and what actually changed, not intent.
+4. If you've hit `max_iterations`, skip straight to the close step below.
+5. Otherwise increment the iteration counter and go to **Verification pass**.
+
+**Verification pass (iteration 2+):**
+1. Call `outside_reply` with this prompt:
+   > I've applied fixes to the artifact. Re-read the files (paths unchanged) and return JSON with: `finding_updates` (array of `{id, status, reviewer_notes}` for EVERY prior finding, where status ∈ `fixed|open|reopened`), `new_findings` (array of any NEW issues introduced by the changes, same schema as iteration 1), `verdict` (pass/revise/escalate). My change summary: <paste your change summary here>.
+2. Parse the response. Merge:
+   - `status=fixed` in iteration 2 → if it remains absent in iteration 3, promote to `verified`. Otherwise still `fixed`.
+   - `status=open` → remains `open`.
+   - `status=reopened` → was previously `fixed`/`verified`, now `open` again.
+   - `new_findings` → add with new stable IDs (F{n+1}, F{n+2}, ...).
+3. Update the running ConvergenceResult you'll present at the end.
+4. **Exit conditions** (check after each verification pass, in this order):
+   - All findings are `verified` or `wont_fix` → exit with verdict `pass`.
+   - Iteration counter == `max_iterations` → exit with the latest verdict from outside.
+   - Otherwise: loop back to **Edit and verify**.
+
+**Close step (always runs once on exit):**
+1. Call `outside_close` with the `session_id`.
+2. Present the final **ConvergenceResult**:
+
+```
+## Convergence Result
+
+**Verdict:** {final_verdict}
+**Iterations:** {n} of {max_iterations}
+**Exit reason:** {all_verified | max_iterations_reached | escalated}
+
+### Final findings
+For each finding:
+- **[{id}] {title}** — status: {status} (severity: {severity})
+  {impact}
+  {if status=wont_fix: Rationale: {your rationale}}
+
+### Changes applied across iterations
+- Iteration 1: {change summary}
+- Iteration 2: {change summary}
+- ...
+
+### Open or reopened findings
+{list, or "None — all findings verified or intentionally skipped"}
+```
+
+### Loop rules
+
+- You do the file edits — not the server, not a subprocess. Your native Read/Edit/Grep access is the whole point.
+- Intra-iteration dialogue is free; fix-cycles are bounded by `max_iterations`.
+- If the outside agent returns non-JSON or malformed JSON at any iteration, retry the same prompt once with "return ONLY valid JSON, no prose wrapper." If the second attempt also fails, close the session and report verdict `escalate` with the raw response.
+- If you apply zero edits in an iteration (e.g., all remaining findings are `wont_fix`), skip the next verification pass and exit directly.
+- Always `outside_close` on exit — even on error paths.
 
 ## Rules
 

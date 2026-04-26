@@ -43,7 +43,7 @@ Construct an attack request that gives the attacker:
 - Explicit instruction: find failure modes, attack assumptions, do NOT propose fixes
 
 For file context:
-- If `workspace_access` is `native`: include file paths for the attacker to read implementation details directly.
+- If `workspace_access` is `native`: include file paths for the attacker to read implementation details directly. Add this hint at the end of the attack brief: "If you have access to code navigation tools (e.g. serena, codegraph), use them to trace call chains, dependencies, and edge cases before attacking."
 - If `workspace_access` is `assisted` or `none`: read the relevant files yourself and include implementation details in the prompt.
 
 Call `mcp__agentcouncil__outside_start` with `prompt` set to the attack brief and `profile` set to the backend argument (or omit `profile` for default). Save `session_id` from the response. Save `response` as the attacker's first reply.

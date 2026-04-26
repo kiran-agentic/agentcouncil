@@ -5,11 +5,13 @@ including argument parsing, error handling, and response format.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from fastmcp import Client
 
+from agentcouncil.providers.base import ProviderError
 from agentcouncil.server import mcp
 
 
@@ -166,6 +168,174 @@ async def test_mcp_review_loop_tool(journal_dir, monkeypatch):
 
     assert not result.is_error
     assert "exit_reason" in result.data or hasattr(result.data, "exit_reason")
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_loop_falls_back_on_provider_error(journal_dir, monkeypatch):
+    """review_loop MCP tool falls back when provider-backed session startup fails."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    review_json = json.dumps({
+        "verdict": "pass",
+        "summary": "Clean code",
+        "findings": [],
+        "strengths": ["Good"],
+        "open_questions": [],
+        "next_action": "Ship",
+    })
+
+    def _make_stub_provider(*a, **kw):
+        raise ProviderError("Failed to reconnect to codex")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter(["Outside review", review_json]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter(["Lead review"]))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("review_loop", {
+            "artifact": "def add(a, b): return a + b",
+            "artifact_type": "code",
+            "max_iterations": 1,
+        })
+
+    assert not result.is_error
+    assert "exit_reason" in result.data or hasattr(result.data, "exit_reason")
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_loop_falls_back_on_unexpected_provider_exception(journal_dir, monkeypatch):
+    """review_loop MCP tool falls back on unexpected provider-backed exceptions."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    review_json = json.dumps({
+        "verdict": "pass",
+        "summary": "Clean code",
+        "findings": [],
+        "strengths": ["Good"],
+        "open_questions": [],
+        "next_action": "Ship",
+    })
+
+    def _make_stub_provider(*a, **kw):
+        raise RuntimeError("unexpected codex transport failure")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter",
+                        lambda *a, **kw: StubAdapter(["Outside review", review_json]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter",
+                        lambda *a, **kw: StubAdapter(["Lead review"]))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("review_loop", {
+            "artifact": "def add(a, b): return a + b",
+            "artifact_type": "code",
+            "max_iterations": 1,
+        })
+
+    assert not result.is_error
+    assert "exit_reason" in result.data or hasattr(result.data, "exit_reason")
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_loop_compacts_large_success_payload(journal_dir, monkeypatch):
+    """Large successful review_loop results are compacted for MCP transport."""
+    import agentcouncil.convergence as conv_mod
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+    from agentcouncil.schemas import ConvergenceResult, Finding
+
+    huge_text = "A" * 8000
+
+    async def _fake_review_loop(*args, **kwargs):
+        return ConvergenceResult(
+            iterations=[],
+            final_findings=[
+                Finding(
+                    id=f"F{i}",
+                    title=f"Finding {i}",
+                    severity="high",
+                    impact=huge_text,
+                    description=huge_text,
+                    evidence=huge_text,
+                    locations=[f"file_{j}.py:10" for j in range(12)],
+                    confidence="high",
+                    agreement="confirmed",
+                    origin="outside",
+                )
+                for i in range(20)
+            ],
+            total_iterations=1,
+            exit_reason="native_workspace_single_pass",
+            final_verdict="revise",
+        )
+
+    def _make_stub_provider(*a, **kw):
+        raise ValueError("force legacy path")
+
+    monkeypatch.setattr(conv_mod, "review_loop", _fake_review_loop)
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter", lambda *a, **kw: StubAdapter([]))
+    monkeypatch.setattr(server_mod, "ClaudeAdapter", lambda *a, **kw: StubAdapter([]))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("review_loop", {
+            "artifact": "spec body",
+            "artifact_type": "plan",
+            "max_iterations": 1,
+        })
+
+    assert not result.is_error
+    assert result.data["response_truncated"] is True
+    assert len(result.data["final_findings"]) <= server_mod._MCP_REVIEW_LOOP_FINDINGS_LIMIT
+    assert json.dumps(result.data, ensure_ascii=False)
+    assert len(json.dumps(result.data, ensure_ascii=False)) <= server_mod._MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_loop_returns_even_if_provider_close_hangs(journal_dir, monkeypatch):
+    """Successful review_loop should still return if provider cleanup hangs."""
+    import agentcouncil.convergence as conv_mod
+    import agentcouncil.server as server_mod
+    from agentcouncil.schemas import ConvergenceResult
+
+    class HangingProvider:
+        session_strategy = "persistent"
+        workspace_access = "native"
+        supports_runtime_tools = False
+
+        async def auth_check(self):
+            return None
+
+        async def close(self):
+            await asyncio.sleep(3600)
+
+    async def _fake_review_loop(*args, **kwargs):
+        return ConvergenceResult(
+            iterations=[],
+            final_findings=[],
+            total_iterations=1,
+            exit_reason="all_verified",
+            final_verdict="pass",
+        )
+
+    monkeypatch.setattr(conv_mod, "review_loop", _fake_review_loop)
+    monkeypatch.setattr(server_mod, "_make_provider", lambda *a, **kw: HangingProvider())
+    monkeypatch.setattr(server_mod, "ClaudeAdapter", lambda *a, **kw: None)
+    monkeypatch.setattr(server_mod, "_SESSION_CLOSE_TIMEOUT_SECONDS", 0.01)
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("review_loop", {
+            "artifact": "spec body",
+            "artifact_type": "plan",
+            "max_iterations": 1,
+        })
+
+    assert not result.is_error
+    assert result.data["final_verdict"] == "pass"
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.0 (2026-04-14)
+## 0.3.0 (2026-04-25)
+
+Second public release. This version expands AgentCouncil from one-shot deliberation protocols into a broader workflow system with persistent history, iterative review loops, richer provenance, and an autopilot workflow for governed delivery inside Claude Code.
 
 ### Features
 
@@ -12,6 +14,10 @@
 - **Resumable Protocol State:** Protocol state machine with checkpointing at phase boundaries. Review protocol wired with checkpoint persistence during execution. MCP tool: `protocol_resume`
 - **Deliberation Inspector:** CLI session viewer (`agentcouncil <session_id>`, `agentcouncil --list`, `--json`). New `/inspect` skill for in-session use
 - **Enhanced /review skill:** Supports `--loop` / `--converge` flag for iterative convergence mode. Shows contextual hint after one-shot reviews with findings
+- **Autopilot workflow:** New `/autopilot` Claude Code skill plus MCP autopilot tools for spec validation, tier classification, durable run state, skill-path checkpointing, status inspection, and resume (`autopilot_prepare`, `autopilot_checkpoint`, `autopilot_start`, `autopilot_status`, `autopilot_resume`)
+- **Autopilot gate backend selection:** `/autopilot backend=<profile>` selects the outside reviewer backend for `review_loop` gates; `challenge_backend=<profile>` selects the outside attacker backend for challenge gates
+- **Autopilot protocol durability:** `/autopilot` now records project-local run state under `docs/autopilot/` so resumed sessions know the next required gate instead of relying on conversation memory
+- **Upgrade and reinstall guidance:** README now documents normal plugin updates, user-scope terminal updates, clean reinstall fallback, and cache-clearing fallback for stale plugin installs
 - **Transcript Normalization (partial):** `TranscriptTurn` extended with per-turn provenance fields (actor_id, actor_provider, actor_model, phase, timestamp, parent_turn_id). `BrainstormResult.transcript` migrated from `RoundTranscript` to `Transcript`. Exchange turns populated with provenance. Initial proposals and synthesis remain as top-level `Transcript` fields — full migration to turn-only representation deferred
 
 ### Schema additions
@@ -32,6 +38,7 @@
 - **Journal persistence overwrites prior checkpoint state.** Final `_persist_journal` call replaces the entry rather than merging, so mid-run checkpoints and events may be lost. Resume from `exchange_complete` phase restarts rather than continuing.
 - **Turn Stream events are not automatically emitted during protocol execution.** `append_event()` exists as API but protocol engines don't call it yet.
 - **Expert Witness `specialist_provider` parameter is accepted but not automatically invoked.** Use `specialist_check()` directly via the library API.
+- **The low-level MCP autopilot path remains infrastructure-first.** The user-facing `/autopilot` skill is the best way to exercise the full workflow in Claude Code today; the typed MCP autopilot runners are still evolving. Real typed-pipeline gate execution is available when `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise the typed pipeline uses stub gate artifacts for compatibility.
 
 ### Security
 

@@ -74,12 +74,25 @@ def _build_rereview_prompt(
     original_artifact: str,
     prior_findings: list[Finding],
     addressed_changes: str,
+    file_paths: list[str] | None = None,
+    workspace_access: str = "none",
 ) -> str:
-    """CL-05: Build scoped re-review prompt with prior findings + change summary."""
+    """CL-05: Build scoped re-review prompt with prior findings + change summary.
+
+    When workspace_access is "native" and file_paths are provided, references
+    file paths instead of embedding the original artifact content.
+    """
     findings_text = "\n".join(
         f"- [{f.id}] {f.title} (severity: {f.severity}): {f.description}"
         for f in prior_findings
     )
+
+    if workspace_access == "native" and file_paths:
+        file_list = "\n".join(f"- {p}" for p in file_paths)
+        artifact_section = f"## Original Artifact Files\nRe-read these files for the current state:\n{file_list}"
+    else:
+        artifact_section = f"## Original Artifact\n{original_artifact}"
+
     return f"""\
 You are re-reviewing an artifact after the lead agent addressed your prior findings.
 Focus on: (1) whether prior findings are resolved, (2) regressions from fixes.
@@ -91,8 +104,7 @@ Do NOT re-review the entire artifact from scratch.
 ## Changes Made by Lead
 {addressed_changes}
 
-## Original Artifact
-{original_artifact}
+{artifact_section}
 
 Respond with JSON containing:
 - "findings": array of objects with finding_id, status (verified/reopened/open), reviewer_notes
@@ -169,11 +181,15 @@ async def review_loop(
     max_iterations: int = 3,
     on_event: Optional[Any] = None,
     outside_meta: Optional[TranscriptMeta] = None,
+    file_paths: Optional[list[str]] = None,
+    workspace_access: str = "none",
+    prior_review_context: Optional[str] = None,
 ) -> ConvergenceResult:
     """Run an iterative review convergence loop (CL-01, CL-02).
 
     Args:
-        artifact: Text content to review.
+        artifact: Text content to review (used as fallback when workspace_access
+            is not "native" or file_paths is empty).
         artifact_type: Type of artifact (code, design, plan, etc.).
         outside_adapter: AgentAdapter for the outside reviewer.
         lead_adapter: AgentAdapter for the lead agent.
@@ -182,6 +198,8 @@ async def review_loop(
         max_iterations: Maximum review iterations (default 3, CL-12 hard cap 10).
         on_event: Optional event callback.
         outside_meta: Optional provenance metadata.
+        file_paths: File paths for agents with native workspace access to read directly.
+        workspace_access: Backend workspace capability ("native", "assisted", "none").
 
     Returns:
         ConvergenceResult with iteration history, final findings, and exit reason.
@@ -200,11 +218,14 @@ async def review_loop(
         review_objective=review_objective,
         focus_areas=focus_areas or [],
         rounds=1,
+        file_paths=file_paths or [],
+        prior_review_context=prior_review_context,
     )
 
     review_result = await review(
         review_input, outside_adapter, lead_adapter,
         on_event=on_event, outside_meta=outside_meta,
+        workspace_access=workspace_access,
     )
 
     # Extract findings from initial review
@@ -231,18 +252,32 @@ async def review_loop(
             final_verdict="pass",
         )
 
-    # Iterations 2..N: fix → scoped re-review → update statuses
+    # Native-workspace short-circuit: when the outside agent reads files directly,
+    # the inner loop can't converge — the lead only *describes* fixes, it doesn't
+    # apply them to disk, so the reviewer sees unchanged files on re-review and
+    # returns the same findings. In that mode, convergence happens outside this
+    # function: caller applies real fixes, then re-invokes review_loop.
+    if workspace_access == "native" and file_paths:
+        return ConvergenceResult(
+            iterations=iterations,
+            final_findings=current_findings,
+            total_iterations=1,
+            exit_reason="native_workspace_single_pass",
+            final_verdict=_derive_verdict(finding_statuses),
+        )
+
+    # Iterations 2..N: fix-describe → scoped re-review → update statuses.
+    # Runs only for text-artifact reviews (workspace_access != "native"), where
+    # the lead's described changes are embedded in the re-review prompt and the
+    # outside session accumulates context across turns.
     for iter_num in range(2, effective_max + 1):
-        # CL-04: Lead addresses findings
         open_findings = [
             f for f in current_findings
             if finding_statuses.get(f.id) in ("open", "reopened")
         ]
-
         if not open_findings:
             break
 
-        # Ask lead to address open findings
         findings_summary = "\n".join(
             f"- [{f.id}] {f.title} ({f.severity}): {f.description}"
             for f in open_findings
@@ -259,9 +294,10 @@ async def review_loop(
             log.warning("lead failed in convergence iteration %d: %s", iter_num, e)
             addressed_changes = f"Lead error: {e}"
 
-        # CL-05: Scoped re-review
         rereview_prompt = _build_rereview_prompt(
             artifact, open_findings, addressed_changes,
+            file_paths=file_paths,
+            workspace_access=workspace_access,
         )
         try:
             rereview_response = await outside_adapter.acall(rereview_prompt)
@@ -269,12 +305,9 @@ async def review_loop(
             log.warning("outside failed in convergence re-review %d: %s", iter_num, e)
             break
 
-        # Parse re-review response
         iter_findings, approved = _parse_rereview_response(
             rereview_response, current_findings, finding_statuses,
         )
-
-        # Update statuses
         for fi in iter_findings:
             finding_statuses[fi.finding_id] = fi.status
 
@@ -284,7 +317,6 @@ async def review_loop(
             approved=approved,
         ))
 
-        # CL-06: Check exit conditions
         if approved:
             return ConvergenceResult(
                 iterations=iterations,
@@ -294,11 +326,7 @@ async def review_loop(
                 final_verdict=_derive_verdict(finding_statuses),
             )
 
-        all_resolved = all(
-            s in ("verified", "wont_fix")
-            for s in finding_statuses.values()
-        )
-        if all_resolved:
+        if all(s in ("verified", "wont_fix") for s in finding_statuses.values()):
             return ConvergenceResult(
                 iterations=iterations,
                 final_findings=current_findings,
@@ -307,7 +335,6 @@ async def review_loop(
                 final_verdict=_derive_verdict(finding_statuses),
             )
 
-    # CL-06b: Max iterations reached
     return ConvergenceResult(
         iterations=iterations,
         final_findings=current_findings,
