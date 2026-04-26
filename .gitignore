@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.egg-info/
 *.egg
+uv.lock
 dist/
 build/
 
@@ -43,6 +44,11 @@ env/
 
 # Internal planning (GSD workflow artifacts)
 .planning/
+SPEC.md
 
 # Local agent/tool state
 .serena/
+
+# Local/generated design and planning artifacts
+assets/
+docs/superpowers/plans/
