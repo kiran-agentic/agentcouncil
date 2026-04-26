@@ -207,10 +207,8 @@ def append_event(session_id: str, event: dict) -> None:
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        # Keep the lock file in place. Unlinking it while another thread or
+        # process is waiting can split future lockers across different inodes.
 
 
 def stream_events(
