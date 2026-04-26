@@ -341,6 +341,23 @@ async def test_review_default_one_round():
     assert len(result.transcript.exchanges) == 0
 
 
+async def test_review_context_included_in_prompt():
+    """review_context is included as factual context before the reviewer explores."""
+    from agentcouncil.review import review
+
+    valid_json = _make_valid_review_json()
+    outside = StubAdapter(responses=["Outside initial", valid_json])
+    lead = StubAdapter(responses=["Lead initial"])
+
+    ri = ReviewInput(
+        artifact="some code",
+        review_context="Context pack: use vitest run; relevant file src/live.ts",
+    )
+    await review(ri, outside, lead)
+
+    assert "Context pack: use vitest run" in outside.calls[0]
+
+
 async def test_review_input_prompt_factual_only():
     """The input_prompt sent to adapters contains artifact content but NOT opinion language (REV-10, REV-07)."""
     from agentcouncil.review import review

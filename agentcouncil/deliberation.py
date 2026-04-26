@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 import time
@@ -856,6 +857,7 @@ async def run_deliberation(
     outside_meta: Optional[TranscriptMeta] = None,
     checkpoint_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     resume_state: Optional[Dict[str, Any]] = None,
+    parallel_initial: bool = False,
 ) -> DeliberationResult:
     """Run the dual-independent deliberation protocol and return a structured result.
 
@@ -909,33 +911,61 @@ async def run_deliberation(
 
     if not _skip_to_synthesis:
         # Phase 1: Independent initial analysis (COM-06)
-        # Outside agent sees only input_prompt
-        emit("step", {"agent": "outside", "step": "initial", "status": "active"})
-        try:
-            outside_initial = await outside_adapter.acall(input_prompt)
-        except AdapterError as e:
-            log.warning("outside initial failed: %s", e)
-            emit("step", {"agent": "outside", "step": "initial", "status": "error"})
-            return _generic_partial_failure(
-                artifact_cls, input_prompt, str(e), "outside",
-                outside_meta=outside_meta,
-            )
-        emit("step", {"agent": "outside", "step": "initial", "status": "done"})
-
-        # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
         lead_prompt = lead_input_prompt if lead_input_prompt is not None else input_prompt
-        emit("step", {"agent": "lead", "step": "initial", "status": "active"})
-        try:
-            lead_initial = await lead_adapter.acall(lead_prompt)
-        except AdapterError as e:
-            log.warning("lead initial failed: %s", e)
-            emit("step", {"agent": "lead", "step": "initial", "status": "error"})
-            return _generic_partial_failure(
-                artifact_cls, input_prompt, str(e), "lead",
-                outside_initial=outside_initial,
-            outside_meta=outside_meta,
-        )
-    emit("step", {"agent": "lead", "step": "initial", "status": "done"})
+        if parallel_initial:
+            emit("step", {"agent": "outside", "step": "initial", "status": "active"})
+            emit("step", {"agent": "lead", "step": "initial", "status": "active"})
+            outside_result, lead_result = await asyncio.gather(
+                outside_adapter.acall(input_prompt),
+                lead_adapter.acall(lead_prompt),
+                return_exceptions=True,
+            )
+            if isinstance(outside_result, Exception):
+                log.warning("outside initial failed: %s", outside_result)
+                emit("step", {"agent": "outside", "step": "initial", "status": "error"})
+                return _generic_partial_failure(
+                    artifact_cls, input_prompt, str(outside_result), "outside",
+                    outside_meta=outside_meta,
+                )
+            emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+            outside_initial = outside_result
+            if isinstance(lead_result, Exception):
+                log.warning("lead initial failed: %s", lead_result)
+                emit("step", {"agent": "lead", "step": "initial", "status": "error"})
+                return _generic_partial_failure(
+                    artifact_cls, input_prompt, str(lead_result), "lead",
+                    outside_initial=outside_initial,
+                    outside_meta=outside_meta,
+                )
+            lead_initial = lead_result
+            emit("step", {"agent": "lead", "step": "initial", "status": "done"})
+        else:
+            # Outside agent sees only input_prompt
+            emit("step", {"agent": "outside", "step": "initial", "status": "active"})
+            try:
+                outside_initial = await outside_adapter.acall(input_prompt)
+            except AdapterError as e:
+                log.warning("outside initial failed: %s", e)
+                emit("step", {"agent": "outside", "step": "initial", "status": "error"})
+                return _generic_partial_failure(
+                    artifact_cls, input_prompt, str(e), "outside",
+                    outside_meta=outside_meta,
+                )
+            emit("step", {"agent": "outside", "step": "initial", "status": "done"})
+
+            # Lead agent sees lead_input_prompt (or input_prompt if not provided) -- NOT outside_initial (COM-06)
+            emit("step", {"agent": "lead", "step": "initial", "status": "active"})
+            try:
+                lead_initial = await lead_adapter.acall(lead_prompt)
+            except AdapterError as e:
+                log.warning("lead initial failed: %s", e)
+                emit("step", {"agent": "lead", "step": "initial", "status": "error"})
+                return _generic_partial_failure(
+                    artifact_cls, input_prompt, str(e), "lead",
+                    outside_initial=outside_initial,
+                    outside_meta=outside_meta,
+                )
+            emit("step", {"agent": "lead", "step": "initial", "status": "done"})
 
     # Checkpoint: both proposals received (RP-02)
     if checkpoint_callback is not None:

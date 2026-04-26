@@ -17,11 +17,12 @@ Underneath that headline feature, AgentCouncil still provides its core multi-age
 
 ---
 
-## What's New In 0.3.0
+## What's New In 0.3.x
 
-This release is centered on **`/autopilot`**:
+The `0.3.x` series is centered on **`/autopilot`**:
 
 - **`/autopilot`** is now the headline workflow: a governed implementation skill for Claude Code with spec, planning, build, review, verification, and ship stages.
+- **`0.3.1` patch:** adds opt-in faster review gates with `review_depth=fast|balanced`, sanitized `ReviewContextPack` artifacts, review timing/status visibility, and safer project-local autopilot state.
 - **Deliberation Journal** stores every protocol run under `~/.agentcouncil/journal/` with transcript, artifact, provenance, and status metadata.
 - **`/review --loop` convergence mode** tracks findings across iterations until they are verified, reopened, or explicitly accepted.
 - **Blind Panel brainstorms** let multiple outside agents propose in parallel before reveal with `/brainstorm backends=...`.
@@ -78,6 +79,14 @@ Choose the review/challenge model with backend profiles:
 
 `backend` is used for all `review_loop` gates. `challenge_backend` is used for the conditional adversarial challenge gate and defaults to `backend` when omitted. The spec, plan, build, verify, and ship work runs on the active Claude Code lead model.
 
+For `0.3.x`, review speed is opt-in so existing Opus-based review behavior remains compatible:
+
+```text
+/autopilot review_depth=balanced lead_review_model=sonnet Add audit logging
+```
+
+`review_depth=legacy` preserves the current behavior. `fast` and `balanced` run the independent outside reviewer and internal lead-review subprocess in parallel, return a single consolidated pass, and leave actual revisions to the lead agent before a re-review. `deep` keeps the longer iterative convergence behavior. `lead_review_model` applies only to that internal review subprocess, not to the Claude Code session doing the implementation.
+
 ### `/autopilot` flow
 
 ```
@@ -88,13 +97,14 @@ spec_prep → review_loop → plan → review_loop → build → review_loop →
 
 Under the hood, `0.3.0` also adds a typed MCP autopilot pipeline with durable run state:
 
-Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`plan` and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. `spec_prep` and `ship` have no gates.
+Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`spec_prep`, `plan`, and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. During long gates, `autopilot_status` exposes `review_state` with backend, lead model, budget, elapsed timing, and reviewer provenance.
 
 ### MCP Tools
 
 | Tool | Purpose |
 |------|---------|
 | `autopilot_prepare` | Validate spec, classify tier, create run |
+| `autopilot_context_pack` | Build or reuse a sanitized review context pack for faster gates |
 | `autopilot_checkpoint` | Record durable skill-path protocol progress and next required gate |
 | `autopilot_start` | Execute the full pipeline |
 | `autopilot_status` | Inspect current run state |

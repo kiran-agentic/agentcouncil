@@ -115,6 +115,23 @@ class TestCodebaseResearch:
         brief = run_codebase_research(spec, project_root=tmp_path)
         assert "python3 -m pytest" in brief.test_commands
 
+    def test_discovers_typescript_files_and_package_test_command(self, tmp_path):
+        """run_codebase_research is manifest-driven, not Python-only."""
+        src = tmp_path / "apps/jarvis-voice/src"
+        src.mkdir(parents=True)
+        (src / "VoiceScreen.tsx").write_text("export function VoiceScreen() { return null }\n")
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"test":"vitest run","lint":"eslint ."}}\n'
+        )
+        (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{}}\n')
+
+        spec = _make_spec(target_files=["apps/jarvis-voice/src/VoiceScreen.tsx"])
+        brief = run_codebase_research(spec, project_root=tmp_path)
+
+        assert "apps/jarvis-voice/src/VoiceScreen.tsx" in brief.relevant_files
+        assert "vitest run" in brief.test_commands
+        assert any("tsconfig.json" in pattern for pattern in brief.existing_patterns)
+
     def test_no_test_commands_when_no_config(self, tmp_path):
         """run_codebase_research returns empty test_commands when no config present."""
         spec = _make_spec()

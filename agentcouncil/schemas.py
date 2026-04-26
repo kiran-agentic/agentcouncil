@@ -147,6 +147,7 @@ class ReviewInput(BaseModel):
     rounds: int = 1
     file_paths: list[str] = Field(default_factory=list)  # when set + workspace_access=native, agents read files directly
     prior_review_context: Optional[str] = None  # findings from a prior review cycle; used on revision retries to focus the reviewer on whether prior issues were resolved
+    review_context: Optional[str] = None  # compact context pack used to avoid broad rediscovery during autopilot gates
 
 
 class Finding(BaseModel):
@@ -413,8 +414,15 @@ class ConvergenceResult(BaseModel):
     iterations: list[ConvergenceIteration] = Field(default_factory=list)
     final_findings: list[Finding] = Field(default_factory=list)
     total_iterations: int
-    exit_reason: Literal["all_verified", "max_iterations", "approved", "native_workspace_single_pass"]
+    exit_reason: Literal[
+        "all_verified",
+        "max_iterations",
+        "approved",
+        "native_workspace_single_pass",
+        "single_pass_review_depth",
+    ]
     final_verdict: Literal["pass", "revise", "escalate"]
+    timing: dict[str, float | str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

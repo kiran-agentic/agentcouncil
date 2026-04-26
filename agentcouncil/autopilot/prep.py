@@ -50,12 +50,20 @@ def run_codebase_research(
     else:
         root = project_root
 
-    # Walk Python files (cap at 200)
-    all_py_files: list[str] = []
+    # Walk common implementation files (cap at 200). This is intentionally
+    # manifest/language driven so TypeScript, mobile, and service repos do not
+    # degrade to "Found 0 Python files".
+    source_globs = ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.go", "*.rs"]
+    relevant_files: list[str] = []
     try:
-        for path in root.rglob("*.py"):
-            all_py_files.append(str(path.relative_to(root)))
-            if len(all_py_files) >= 200:
+        for pattern in source_globs:
+            for path in root.rglob(pattern):
+                if any(part in {".git", "node_modules", ".venv", "dist", "build"} for part in path.parts):
+                    continue
+                relevant_files.append(str(path.relative_to(root)))
+                if len(relevant_files) >= 200:
+                    break
+            if len(relevant_files) >= 200:
                 break
     except (PermissionError, OSError):
         pass
@@ -79,8 +87,20 @@ def run_codebase_research(
             scripts = data.get("scripts", {})
             if "test" in scripts:
                 test_commands.append(scripts["test"])
+            for extra in ("test:unit", "vitest", "jest"):
+                if extra in scripts and scripts[extra] not in test_commands:
+                    test_commands.append(scripts[extra])
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
+
+    existing_patterns: list[str] = []
+    for name in (
+        "package.json", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
+        "jest.config.js", "jest.config.ts", "pyproject.toml", "Cargo.toml",
+        "go.mod", "Makefile",
+    ):
+        if (root / name).exists():
+            existing_patterns.append(name)
 
     makefile_path = root / "Makefile"
     if makefile_path.exists():
@@ -90,7 +110,7 @@ def run_codebase_research(
 
     # Detect sensitive areas
     sensitive_areas: list[str] = []
-    for file_path in all_py_files:
+    for file_path in relevant_files:
         path_lower = file_path.lower()
         for pattern in _SENSITIVE_PATTERNS:
             if pattern in path_lower:
@@ -119,7 +139,7 @@ def run_codebase_research(
 
     # Build summary
     summary_parts = [
-        f"Found {len(all_py_files)} Python files in project.",
+        f"Found {len(relevant_files)} implementation files in project.",
     ]
     if likely_target_files:
         summary_parts.append(
@@ -135,8 +155,8 @@ def run_codebase_research(
 
     return CodebaseResearchBrief(
         summary=" ".join(summary_parts),
-        relevant_files=all_py_files[:50],
-        existing_patterns=[],
+        relevant_files=list(dict.fromkeys([*likely_target_files, *relevant_files]))[:80],
+        existing_patterns=existing_patterns,
         likely_target_files=likely_target_files,
         test_commands=test_commands,
         sensitive_areas=sensitive_areas,

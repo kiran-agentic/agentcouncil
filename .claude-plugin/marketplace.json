@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "agentcouncil",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "description": "Brainstorm, review (with --loop convergence), decide, challenge, and inspect protocols with independent agents",
       "source": "./",
       "author": {
