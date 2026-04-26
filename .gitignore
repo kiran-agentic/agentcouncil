@@ -43,3 +43,6 @@ env/
 
 # Internal planning (GSD workflow artifacts)
 .planning/
+
+# Local agent/tool state
+.serena/

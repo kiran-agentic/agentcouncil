@@ -86,7 +86,7 @@ spec_prep → review_loop → plan → review_loop → build → review_loop →
 
 ### Autopilot infrastructure
 
-Under the hood, v2.0 also adds a typed MCP autopilot pipeline with durable run state:
+Under the hood, `0.3.0` also adds a typed MCP autopilot pipeline with durable run state:
 
 Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`plan` and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. `spec_prep` and `ship` have no gates.
 
@@ -95,6 +95,7 @@ Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Sta
 | Tool | Purpose |
 |------|---------|
 | `autopilot_prepare` | Validate spec, classify tier, create run |
+| `autopilot_checkpoint` | Record durable skill-path protocol progress and next required gate |
 | `autopilot_start` | Execute the full pipeline |
 | `autopilot_status` | Inspect current run state |
 | `autopilot_resume` | Continue a paused run |
@@ -111,7 +112,7 @@ Tier only promotes (never demotes). Sensitive file detection during execution ca
 ### Current Status
 
 - **Use `/autopilot` as the main Claude Code experience.** It is the best way to exercise the workflow end to end today.
-- **The typed MCP autopilot tools are available now** for run creation, persistence, tier classification, status, and resume.
+- **The typed MCP autopilot tools are available now** for run creation, checkpointing, persistence, tier classification, status, and resume.
 - **The MCP autopilot path is still evolving.** Its gate execution and some runner behavior remain more infrastructure-oriented than the higher-level `/autopilot` skill experience.
 
 ## Quick Start
@@ -203,10 +204,50 @@ cp -r skills/ .claude/skills/
 
 **Plugin install (marketplace):**
 
+Refresh the marketplace listing, update the installed plugin, then reload plugins:
+
 ```
-/plugin update agentcouncil
+/plugin marketplace update agentcouncil
+/plugin update agentcouncil@agentcouncil
 /reload-plugins
 ```
+
+For a user-scope install from the terminal:
+
+```bash
+claude plugin marketplace update agentcouncil
+claude plugin update agentcouncil@agentcouncil --scope user
+```
+
+If Claude Code says AgentCouncil is already current but you expected a newer release, confirm the release bumped `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. Claude Code uses plugin version metadata when deciding what is new.
+
+**Fallback: clean reinstall**
+
+Use this when skills do not appear, MCP tools look stale, or the marketplace install does not refresh the cached plugin:
+
+```
+/plugin uninstall agentcouncil@agentcouncil
+/plugin marketplace update agentcouncil
+/plugin install agentcouncil@agentcouncil
+/reload-plugins
+```
+
+For a user-scope reinstall from the terminal:
+
+```bash
+claude plugin uninstall agentcouncil@agentcouncil --scope user
+claude plugin marketplace update agentcouncil
+claude plugin install agentcouncil@agentcouncil --scope user
+```
+
+If Claude Code still loads an old cached copy, clear the AgentCouncil plugin cache and reinstall:
+
+```bash
+rm -rf ~/.claude/plugins/cache/agentcouncil
+claude plugin install agentcouncil@agentcouncil --scope user
+```
+
+Restart Claude Code or run `/reload-plugins` after reinstalling.
 
 **Manual install (from source):**
 
@@ -221,7 +262,7 @@ If you installed skills manually (`cp -r skills/ .claude/skills/`), re-copy them
 cp -r skills/ .claude/skills/
 ```
 
-No configuration changes or migrations are required between versions. New features (journal, convergence loops, inspector) activate automatically. See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
+No configuration changes or migrations are required between versions. New features, including `/autopilot`, journal, convergence loops, and inspector, activate automatically. See [CHANGELOG.md](CHANGELOG.md) for what's new in each version.
 
 ### Use
 
@@ -367,7 +408,7 @@ rsync -a --delete .claude-plugin/ "$PLUGIN/.claude-plugin/"
 cp pyproject.toml "$PLUGIN/pyproject.toml"
 ```
 
-Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update` get fresh cache automatically.
+Then run `/reload-plugins` in Claude Code. Users who install via `/plugin update agentcouncil@agentcouncil` get fresh cache automatically.
 
 </details>
 
