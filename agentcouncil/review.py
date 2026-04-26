@@ -43,6 +43,7 @@ You are reviewing an artifact. Analyze it independently and produce your finding
 
 {artifact}
 
+{review_context_section}
 {objective_section}
 {focus_section}
 {prior_context_section}
@@ -66,6 +67,7 @@ You are reviewing an artifact. Read the files listed below, then analyze indepen
 Read these files:
 {file_list}
 
+{review_context_section}
 {objective_section}
 {focus_section}
 {prior_context_section}
@@ -107,11 +109,22 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
             f"{ri.prior_review_context}"
         )
 
+    review_context_section = ""
+    if ri.review_context:
+        review_context_section = (
+            "## Review Context Pack\n"
+            "Use this compact, pre-gathered context first. Avoid broad repository "
+            "exploration unless this context identifies an unknown or a required "
+            "file is missing.\n\n"
+            f"{ri.review_context}"
+        )
+
     if workspace_access == "native" and ri.file_paths:
         file_list = "\n".join(f"- {p}" for p in ri.file_paths)
         return REVIEW_INPUT_PROMPT_PATHS.format(
             artifact_type=ri.artifact_type,
             file_list=file_list,
+            review_context_section=review_context_section,
             objective_section=objective_section,
             focus_section=focus_section,
             prior_context_section=prior_context_section,
@@ -121,6 +134,7 @@ def _build_input_prompt(ri: ReviewInput, workspace_access: str = "none") -> str:
     return REVIEW_INPUT_PROMPT.format(
         artifact_type=ri.artifact_type,
         artifact=ri.artifact,
+        review_context_section=review_context_section,
         objective_section=objective_section,
         focus_section=focus_section,
         prior_context_section=prior_context_section,
@@ -196,6 +210,7 @@ async def review(
     outside_meta: Optional[TranscriptMeta] = None,
     checkpoint_callback: Optional[OnEvent] = None,
     workspace_access: str = "none",
+    parallel_initial: bool = False,
 ) -> DeliberationResult:
     """Run the review deliberation protocol.
 
@@ -236,6 +251,7 @@ async def review(
         derive_status=_review_derive_status,
         outside_meta=outside_meta,
         checkpoint_callback=checkpoint_callback,
+        parallel_initial=parallel_initial,
     )
 
 

@@ -120,6 +120,7 @@ class AutopilotRun(BaseModel):
     blocking_reason: Optional[str] = None
     resume_prompt: Optional[str] = None
     artifact_refs: dict[str, str] = Field(default_factory=dict)
+    review_state: dict[str, Any] = Field(default_factory=dict)
     workspace_path: Optional[str] = None
     active_state_path: Optional[str] = None
     checkpoint_log: list[ProtocolCheckpointEntry] = Field(default_factory=list)
@@ -203,6 +204,7 @@ def _project_state_payload(run: AutopilotRun, active: bool = True) -> dict[str, 
         "blocking_reason": run.blocking_reason,
         "resume_prompt": run.resume_prompt,
         "artifact_refs": run.artifact_refs,
+        "review_state": run.review_state,
         "updated_at": run.updated_at,
     }
 
@@ -225,7 +227,7 @@ def write_project_state(run: AutopilotRun, workspace_path: str | Path, active: b
             "schema_version": run.schema_version,
             "active": active,
             "run_id": run.run_id,
-            "state_path": str(state_path),
+            "state_path": (PROJECT_RUNS_REL / run.run_id / "state.json").as_posix(),
             "protocol_step": run.protocol_step,
             "review_backend": run.review_backend,
             "challenge_backend": run.challenge_backend,
@@ -358,11 +360,14 @@ def checkpoint_run(
     execution_mode: Literal["runner", "skill"] = "skill",
     review_backend: str | None = None,
     challenge_backend: str | None = None,
+    review_state: dict[str, Any] | None = None,
 ) -> AutopilotRun:
     """Record a durable protocol checkpoint and optionally mirror it locally."""
     now = time.time()
     run = load_run(run_id)
     validate_protocol_checkpoint(run, protocol_step)
+    if next_required_action is None and required_tool and protocol_step not in _TERMINAL_PROTOCOL_STEPS:
+        next_required_action = f"Resolve {protocol_step}, then rerun {required_tool}."
 
     run.schema_version = "1.1"
     run.execution_mode = execution_mode
@@ -378,6 +383,8 @@ def checkpoint_run(
     run.updated_at = now
     if artifact_refs:
         run.artifact_refs.update(artifact_refs)
+    if review_state:
+        run.review_state.update(review_state)
     run.resume_prompt = build_resume_prompt(run)
 
     if stage:

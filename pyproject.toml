@@ -1,6 +1,6 @@
 [project]
 name = "agentcouncil"
-version = "0.3.0"
+version = "0.3.1"
 description = "Multi-agent deliberation protocols for AI coding assistants. Independence before convergence."
 readme = "README.md"
 license = {text = "Apache-2.0"}

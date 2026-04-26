@@ -400,6 +400,7 @@ def test_autopilot_run_protocol_guard_defaults():
     assert run.required_tool is None
     assert run.artifact_refs == {}
     assert run.checkpoint_log == []
+    assert run.review_state == {}
 
 
 def test_checkpoint_writes_project_local_state(run_dir, tmp_path):
@@ -428,6 +429,8 @@ def test_checkpoint_writes_project_local_state(run_dir, tmp_path):
     state_data = json.loads(state.read_text())
     assert active_data["run_id"] == "checkpoint-run"
     assert active_data["required_tool"] == "review_loop"
+    assert active_data["state_path"] == "docs/autopilot/runs/checkpoint-run/state.json"
+    assert str(tmp_path) not in json.dumps(active_data)
     assert state_data["protocol_step"] == "awaiting_spec_review"
     assert state_data["artifact_refs"]["spec"] == "docs/autopilot/specs/test-spec.md"
 
@@ -446,6 +449,21 @@ def test_checkpoint_persists_gate_backends(run_dir):
 
     assert updated.review_backend == "openrouter-gpt"
     assert updated.challenge_backend == "bedrock-sonnet"
+
+
+def test_checkpoint_derives_action_when_required_tool_present(run_dir):
+    """Blocked gate checkpoints should still give resumed agents an explicit action."""
+    run = _make_run(run_id="action-run")
+    persist(run)
+
+    updated = checkpoint_run(
+        "action-run",
+        protocol_step="paused_for_spec_revision",
+        required_tool="review_loop",
+    )
+
+    assert updated.next_required_action == "Resolve paused_for_spec_revision, then rerun review_loop."
+    assert "rerun review_loop" in updated.resume_prompt
 
 
 def test_checkpoint_refuses_verify_before_build_review(run_dir):

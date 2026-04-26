@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import os
 import shutil
 import subprocess
@@ -61,7 +62,7 @@ class AgentAdapter(abc.ABC):
 
         Default implementation delegates to the synchronous call().
         """
-        return self.call(prompt)
+        return await asyncio.to_thread(self.call, prompt)
 
 
 class CodexAdapter(AgentAdapter):

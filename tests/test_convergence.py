@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -12,6 +13,23 @@ from agentcouncil.schemas import (
     ConvergenceIteration,
     ConvergenceResult,
 )
+
+
+class AsyncSleepAdapter:
+    def __init__(self, responses, delay=0.05):
+        self.responses = list(responses)
+        self.calls = []
+        self.delay = delay
+
+    async def acall(self, prompt: str) -> str:
+        import asyncio
+
+        self.calls.append(prompt)
+        await asyncio.sleep(self.delay)
+        return self.responses.pop(0)
+
+    def call(self, prompt: str) -> str:
+        raise AssertionError("sync call should not be used")
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +156,57 @@ async def test_convergence_loop_no_findings_passes(journal_dir):
     assert result.exit_reason == "all_verified"
     assert result.total_iterations == 1
     assert result.final_findings == []
+
+
+@pytest.mark.asyncio
+async def test_balanced_review_runs_initial_reviews_in_parallel(journal_dir):
+    """Balanced mode uses independent outside/lead initial reviews concurrently."""
+    from agentcouncil.convergence import review_loop
+
+    empty_review = _make_review_json([])
+    outside = AsyncSleepAdapter(["Outside initial review", empty_review], delay=0.08)
+    lead = AsyncSleepAdapter(["Lead initial review"], delay=0.08)
+
+    started = time.perf_counter()
+    result = await review_loop(
+        artifact="def foo(): pass",
+        artifact_type="code",
+        outside_adapter=outside,
+        lead_adapter=lead,
+        review_depth="balanced",
+        review_context="Context pack: focused review",
+    )
+    elapsed = time.perf_counter() - started
+
+    assert result.exit_reason == "all_verified"
+    assert elapsed < 0.22
+    assert result.timing["review_depth"] == "balanced"
+    assert "Context pack: focused review" in outside.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_balanced_review_is_single_pass_when_findings_exist(journal_dir):
+    """Balanced mode should not run expensive fix/re-review convergence loops."""
+    from agentcouncil.convergence import review_loop
+
+    review_json = _make_review_json([_make_finding("R-01", "high")])
+    outside = AsyncSleepAdapter(["Outside initial review", review_json], delay=0.01)
+    lead = AsyncSleepAdapter(["Lead initial review"], delay=0.01)
+
+    result = await review_loop(
+        artifact="buggy code",
+        artifact_type="code",
+        outside_adapter=outside,
+        lead_adapter=lead,
+        max_iterations=3,
+        review_depth="balanced",
+    )
+
+    assert result.exit_reason == "single_pass_review_depth"
+    assert result.final_verdict == "revise"
+    assert result.total_iterations == 1
+    assert len(lead.calls) == 1
+    assert len(outside.calls) == 2  # independent review + synthesis only
 
 
 @pytest.mark.asyncio

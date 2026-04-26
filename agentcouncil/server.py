@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("AGENTCOUNCIL_LOG_LEVEL", "WARNING").upper(), logging.WARNING),
@@ -58,12 +60,17 @@ from agentcouncil.autopilot.verify import run_verify
 from agentcouncil.autopilot.ship import run_ship
 from agentcouncil.autopilot.gate import GateExecutor
 from agentcouncil.autopilot.router import classify_run
+from agentcouncil.autopilot.context import (
+    ReviewContextPack,
+    build_context_pack,
+    record_successful_context_memory,
+)
 
 __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.3.0")
+mcp = FastMCP("agentcouncil", version="0.3.1")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -94,24 +101,62 @@ _MCP_REVIEW_LOOP_FINDINGS_LIMIT = 12
 _SESSION_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
-def _parent_process_cwd() -> str | None:
-    """Get the cwd of the parent process (the Claude Code CLI).
+def _extract_run_id_from_review_context(review_context: str | None) -> str | None:
+    """Best-effort run id extraction from ReviewContextPack.to_review_context()."""
+    if not review_context:
+        return None
+    for line in review_context.splitlines():
+        if not line.startswith("Run:"):
+            continue
+        run_id = line.split(":", 1)[1].strip()
+        if run_id.startswith("run-"):
+            return run_id
+    match = re.search(r"\brun-[a-zA-Z0-9]+\b", review_context)
+    if match:
+        return match.group(0)
+    return None
 
-    Claude Code launches the MCP server as a subprocess from the user's project
-    directory. The parent's cwd is therefore the project directory, even when
-    the server itself runs from the plugin cache.
 
-    Tries /proc first (Linux), then lsof (macOS/BSD). Returns None if neither
-    works or the detected cwd is clearly wrong (e.g. plugin cache, root).
-    """
+def _checkpoint_review_state(
+    run_id: str | None,
+    review_state: dict[str, Any],
+    *,
+    blocked: bool = False,
+    blocking_reason: str | None = None,
+) -> None:
+    """Update durable review progress without disturbing the pending gate guard."""
+    if not run_id:
+        return
+    try:
+        run = load_run(run_id)
+        checkpoint_run(
+            run_id,
+            protocol_step="blocked_on_review_loop_retry" if blocked else run.protocol_step,
+            next_required_action=(
+                "Retry the review_loop gate after the reviewer backend is available."
+                if blocked else run.next_required_action
+            ),
+            required_tool=run.required_tool or "review_loop",
+            blocking_reason=blocking_reason if blocked else run.blocking_reason,
+            artifact_refs=run.artifact_refs,
+            stage=run.current_stage if blocked else None,
+            stage_status="blocked" if blocked else None,
+            workspace_path=run.workspace_path or _get_workspace_sync(),
+            review_state=review_state,
+        )
+    except Exception:
+        log.exception("review_loop: failed to checkpoint review_state for %s", run_id)
+
+
+def _process_cwd(pid: int) -> str | None:
+    """Best-effort cwd lookup for a process id."""
     import subprocess
 
-    ppid = os.getppid()
-    if ppid <= 1:
+    if pid <= 1:
         return None
 
     # Linux: /proc/<pid>/cwd is a symlink
-    proc_cwd = Path(f"/proc/{ppid}/cwd")
+    proc_cwd = Path(f"/proc/{pid}/cwd")
     if proc_cwd.exists():
         try:
             return str(proc_cwd.resolve())
@@ -121,7 +166,7 @@ def _parent_process_cwd() -> str | None:
     # macOS/BSD: use lsof
     try:
         result = subprocess.run(
-            ["lsof", "-a", "-p", str(ppid), "-d", "cwd", "-Fn"],
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
             capture_output=True, text=True, timeout=2,
         )
         for line in result.stdout.splitlines():
@@ -129,6 +174,52 @@ def _parent_process_cwd() -> str | None:
                 return line[1:]
     except (OSError, subprocess.TimeoutExpired, FileNotFoundError):
         pass
+
+    return None
+
+
+def _process_parent_pid(pid: int) -> int | None:
+    """Best-effort parent pid lookup."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _parent_process_cwd() -> str | None:
+    """Get the cwd of a plausible ancestor process (usually Claude Code).
+
+    Claude Code launches the MCP server as a subprocess from the user's project
+    directory, often through a `uv run --directory <plugin-cache>` wrapper. The
+    immediate parent may therefore be the wrapper in the plugin cache, while the
+    Claude Code process one level above still has the project cwd.
+
+    Walk a few ancestors and return the first plausible project directory.
+    """
+    pid = os.getppid()
+    seen: set[int] = set()
+    for _ in range(6):
+        if pid <= 1 or pid in seen:
+            return None
+        seen.add(pid)
+        cwd = _process_cwd(pid)
+        if cwd and _is_plausible_project_dir(cwd):
+            return cwd
+        next_pid = _process_parent_pid(pid)
+        if next_pid is None:
+            return None
+        pid = next_pid
 
     return None
 
@@ -191,9 +282,15 @@ async def _resolve_workspace(ctx=None) -> str:
         _sync_project_dir()
         return _resolved_workspace
 
-    # 4. Last resort
-    _resolved_workspace = str(Path.cwd())
-    log.warning("Workspace using Path.cwd() fallback (may be wrong): %s", _resolved_workspace)
+    # 4. Last resort for direct library/test usage only.
+    cwd = str(Path.cwd())
+    if not _is_plausible_project_dir(cwd):
+        raise RuntimeError(
+            "AgentCouncil could not resolve the project workspace. "
+            "Set AGENTCOUNCIL_CWD to the project root or ensure the MCP client provides roots."
+        )
+    _resolved_workspace = cwd
+    log.warning("Workspace using fallback (may be wrong): %s", _resolved_workspace)
     _sync_project_dir()
     return _resolved_workspace
 
@@ -216,7 +313,13 @@ def _resolve_workspace_sync() -> str:
         _sync_project_dir()
         return _resolved_workspace
 
-    _resolved_workspace = str(Path.cwd())
+    cwd = str(Path.cwd())
+    if not _is_plausible_project_dir(cwd):
+        raise RuntimeError(
+            "AgentCouncil could not resolve the project workspace. "
+            "Set AGENTCOUNCIL_CWD to the project root or ensure the MCP client provides roots."
+        )
+    _resolved_workspace = cwd
     _sync_project_dir()
     return _resolved_workspace
 
@@ -233,6 +336,18 @@ def _sync_project_dir() -> None:
         set_project_dir(ws)
 
 
+def _resolve_project_ref(ref: str | None, workspace_path: str | None) -> Path | None:
+    """Resolve a project-local artifact ref without exposing absolute refs in state."""
+    if not ref:
+        return None
+    path = Path(ref).expanduser()
+    if path.is_absolute():
+        return path
+    if workspace_path:
+        return Path(workspace_path).expanduser().resolve() / path
+    return Path(_resolve_workspace_sync()) / path
+
+
 # ---------------------------------------------------------------------------
 # Provider factory
 # ---------------------------------------------------------------------------
@@ -242,6 +357,7 @@ def _make_provider(
     profile: str | None = None,
     model: str | None = None,
     workspace: str | None = None,
+    timeout: int | None = None,
 ) -> OutsideProvider:
     """Resolve a named profile and instantiate the appropriate provider.
 
@@ -275,7 +391,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.codex import CodexProvider
-            return CodexProvider(model=model, cwd=workspace or _get_workspace_sync())
+            return CodexProvider(model=model, timeout=timeout or 900, cwd=workspace or _get_workspace_sync())
         elif resolved == "claude":
             if shutil.which("claude") is None:
                 raise ProviderError(
@@ -284,7 +400,7 @@ def _make_provider(
                     "or configure a different backend in .agentcouncil.json."
                 )
             from agentcouncil.providers.claude import ClaudeProvider
-            return ClaudeProvider(model=model, cwd=workspace or _get_workspace_sync())
+            return ClaudeProvider(model=model, timeout=timeout or 900, cwd=workspace or _get_workspace_sync())
         raise ValueError(
             f"Session API requires a named profile with provider=ollama/openrouter/bedrock/codex/claude. "
             f"Got legacy backend: {resolved!r}"
@@ -325,6 +441,7 @@ def _make_provider(
         from agentcouncil.providers.codex import CodexProvider
         return CodexProvider(
             model=model or bp.model,
+            timeout=timeout or 900,
             cwd=workspace or _get_workspace_sync(),
         )
     elif bp.provider == "claude":
@@ -337,6 +454,7 @@ def _make_provider(
         from agentcouncil.providers.claude import ClaudeProvider
         return ClaudeProvider(
             model=model or bp.model,
+            timeout=timeout or 900,
             cwd=workspace or _get_workspace_sync(),
         )
     else:
@@ -1261,6 +1379,16 @@ def _compact_review_loop_payload(payload: dict) -> dict:
 
     findings = compact.get("final_findings")
     if isinstance(findings, list):
+        compact["findings_summary"] = [
+            {
+                "id": finding.get("id"),
+                "title": finding.get("title"),
+                "severity": finding.get("severity"),
+                "origin": finding.get("origin"),
+            }
+            for finding in findings
+            if isinstance(finding, dict)
+        ]
         for finding in findings:
             if not isinstance(finding, dict):
                 continue
@@ -1392,6 +1520,9 @@ async def review_loop_tool(
     backend: str | None = None,
     file_paths: list[str] | None = None,
     prior_review_context: str | None = None,
+    review_context: str | None = None,
+    review_depth: str = "legacy",
+    lead_review_model: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
@@ -1419,11 +1550,48 @@ async def review_loop_tool(
     await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     from agentcouncil.convergence import review_loop
 
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    depth_config = {
+        "legacy": {"timeout": 900, "lead_model": "opus"},
+        "fast": {"timeout": 120, "lead_model": lead_review_model or "sonnet"},
+        "balanced": {"timeout": 240, "lead_model": lead_review_model or "sonnet"},
+        "deep": {"timeout": 900, "lead_model": lead_review_model or "opus"},
+    }
+    if review_depth not in depth_config:
+        raise ValueError("review_depth must be one of: legacy, fast, balanced, deep")
+    cfg = depth_config[review_depth]
+    timeout = int(cfg["timeout"])
+    lead_model = lead_review_model or str(cfg["lead_model"])
+    lead = ClaudeAdapter(model=lead_model, timeout=timeout)
+    run_id = _extract_run_id_from_review_context(review_context)
+    review_started = _time.time()
+    provenance: dict[str, Any] = {
+        "review_depth": review_depth,
+        "timeout_seconds": timeout,
+        "backend": backend,
+        "lead_review_model": lead_model,
+        "fallback_used": False,
+    }
+    _checkpoint_review_state(
+        run_id,
+        {
+            "active_phase": "review_loop",
+            "status": "in_progress",
+            "started_at": review_started,
+            "budget_seconds": timeout,
+            "backend": backend,
+            "lead_review_model": lead_model,
+            "review_depth": review_depth,
+        },
+    )
 
     try:
-        provider = _make_provider(profile=backend)
+        provider = _make_provider(profile=backend, timeout=timeout)
         ws_access = provider.workspace_access
+        provenance.update({
+            "outside_provider": type(provider).__name__,
+            "outside_workspace_access": ws_access,
+            "outside_transport": getattr(provider, "session_strategy", None),
+        })
         log.warning("review_loop: provider=%s, workspace_access=%s, workspace=%s, backend=%r",
                      type(provider).__name__, ws_access, _get_workspace_sync(), backend)
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
@@ -1442,16 +1610,39 @@ async def review_loop_tool(
                 file_paths=file_paths,
                 workspace_access=ws_access,
                 prior_review_context=prior_review_context,
+                review_context=review_context,
+                review_depth=review_depth,
             )
         finally:
             await _close_review_loop_resources(provider, session)
     except (ValueError, ProviderError) as exc:
+        if review_depth != "legacy":
+            reason = f"review_loop provider-backed path failed: {exc}"
+            _checkpoint_review_state(
+                run_id,
+                {
+                    **provenance,
+                    "active_phase": "review_loop",
+                    "status": "blocked",
+                    "elapsed_seconds": round(_time.time() - review_started, 3),
+                    "error": str(exc),
+                },
+                blocked=True,
+                blocking_reason=reason,
+            )
+            raise RuntimeError(reason) from exc
         log.warning(
             "review_loop: provider-backed path failed (%s), falling back to legacy adapter",
             exc,
         )
         try:
-            outside = resolve_outside_adapter(backend, timeout=900)
+            outside = resolve_outside_adapter(backend, timeout=timeout)
+            provenance.update({
+                "fallback_used": True,
+                "outside_provider": type(outside).__name__,
+                "outside_workspace_access": "none",
+                "outside_transport": "legacy-adapter",
+            })
             result = await review_loop(
                 artifact=artifact,
                 artifact_type=artifact_type,
@@ -1463,6 +1654,8 @@ async def review_loop_tool(
                 file_paths=file_paths,
                 workspace_access="none",  # fallback path — unknown capability
                 prior_review_context=prior_review_context,
+                review_context=review_context,
+                review_depth=review_depth,
             )
         except Exception as fallback_exc:
             log.exception(
@@ -1473,11 +1666,32 @@ async def review_loop_tool(
                 f"({exc}) and legacy fallback ({fallback_exc})"
             ) from fallback_exc
     except Exception as exc:
+        if review_depth != "legacy":
+            reason = f"review_loop provider-backed path failed: {exc}"
+            _checkpoint_review_state(
+                run_id,
+                {
+                    **provenance,
+                    "active_phase": "review_loop",
+                    "status": "blocked",
+                    "elapsed_seconds": round(_time.time() - review_started, 3),
+                    "error": str(exc),
+                },
+                blocked=True,
+                blocking_reason=reason,
+            )
+            raise RuntimeError(reason) from exc
         log.exception(
             "review_loop: unexpected provider-backed failure, falling back to legacy adapter"
         )
         try:
-            outside = resolve_outside_adapter(backend, timeout=900)
+            outside = resolve_outside_adapter(backend, timeout=timeout)
+            provenance.update({
+                "fallback_used": True,
+                "outside_provider": type(outside).__name__,
+                "outside_workspace_access": "none",
+                "outside_transport": "legacy-adapter",
+            })
             result = await review_loop(
                 artifact=artifact,
                 artifact_type=artifact_type,
@@ -1489,6 +1703,8 @@ async def review_loop_tool(
                 file_paths=file_paths,
                 workspace_access="none",  # fallback path — unknown capability
                 prior_review_context=prior_review_context,
+                review_context=review_context,
+                review_depth=review_depth,
             )
         except Exception as fallback_exc:
             log.exception(
@@ -1499,7 +1715,21 @@ async def review_loop_tool(
                 f"({exc}) and legacy fallback ({fallback_exc})"
             ) from fallback_exc
 
-    return _compact_review_loop_payload(result.model_dump())
+    payload = result.model_dump()
+    provenance["elapsed_seconds"] = round(_time.time() - review_started, 3)
+    payload["reviewer_provenance"] = provenance
+    _checkpoint_review_state(
+        run_id,
+        {
+            **provenance,
+            "active_phase": "review_loop",
+            "status": "completed",
+            "final_verdict": payload.get("final_verdict"),
+            "exit_reason": payload.get("exit_reason"),
+            "timing": payload.get("timing"),
+        },
+    )
+    return _compact_review_loop_payload(payload)
 
 
 @mcp.tool(name="journal_stream")
@@ -1684,6 +1914,26 @@ def autopilot_start_tool(run_id: str) -> dict:
 def autopilot_status_tool(run_id: str) -> dict:
     """Return the current state of an autopilot run."""
     run = load_run(run_id)
+    context_pack = None
+    context_ref = run.artifact_refs.get("context_pack")
+    if context_ref:
+        try:
+            context_path = _resolve_project_ref(context_ref, run.workspace_path)
+            if context_path is None:
+                raise FileNotFoundError("context pack ref is empty")
+            pack = ReviewContextPack.model_validate_json(context_path.read_text())
+            context_pack = {
+                "context_ref": context_ref,
+                "freshness": pack.freshness,
+                "updated_at": pack.updated_at,
+                "unknowns": [u.model_dump() for u in pack.unknowns],
+            }
+        except Exception:
+            context_pack = {
+                "context_ref": context_ref,
+                "freshness": "corrupted",
+                "unknowns": [],
+            }
     return {
         "run_id": run.run_id, "status": run.status,
         "current_stage": run.current_stage, "tier": run.tier,
@@ -1696,12 +1946,38 @@ def autopilot_status_tool(run_id: str) -> dict:
         "blocking_reason": run.blocking_reason,
         "resume_prompt": run.resume_prompt or build_resume_prompt(run),
         "artifact_refs": run.artifact_refs,
+        "review_state": run.review_state,
+        "context_pack": context_pack,
         "workspace_path": run.workspace_path,
         "active_state_path": run.active_state_path,
         "stages": [{"stage": s.stage_name, "status": s.status,
                      "gate_decision": s.gate_decision} for s in run.stages],
         "failure_reason": run.failure_reason,
     }
+
+
+@mcp.tool(name="autopilot_context_pack")
+def autopilot_context_pack_tool(
+    run_id: str,
+    stage: str,
+    changed_files: list[str] | None = None,
+    artifact_refs: dict[str, str] | None = None,
+    refresh_policy: str = "auto",
+    workspace_path: str | None = None,
+) -> dict:
+    """Generate or reuse a sanitized review context pack for an autopilot run."""
+    if refresh_policy not in {"auto", "force", "never"}:
+        raise ValueError("refresh_policy must be one of: auto, force, never")
+    workspace = workspace_path or _resolve_workspace_sync()
+    result = build_context_pack(
+        run_id=run_id,
+        workspace_path=workspace,
+        stage=stage,
+        changed_files=changed_files or [],
+        artifact_refs=artifact_refs or {},
+        refresh_policy=refresh_policy,  # type: ignore[arg-type]
+    )
+    return result.model_dump()
 
 
 @mcp.tool(name="autopilot_checkpoint")
@@ -1720,6 +1996,7 @@ def autopilot_checkpoint_tool(
     workspace_path: str | None = None,
     review_backend: str | None = None,
     challenge_backend: str | None = None,
+    review_state: dict[str, Any] | None = None,
 ) -> dict:
     """Record durable `/autopilot` protocol progress.
 
@@ -1751,7 +2028,14 @@ def autopilot_checkpoint_tool(
         execution_mode="skill",
         review_backend=review_backend,
         challenge_backend=challenge_backend,
+        review_state=review_state,
     )
+    if run.artifact_refs.get("context_pack") and (
+        gate_decision in {"pass", "ready"} or protocol_step in {"ship_complete", "completed"}
+    ):
+        context_path = _resolve_project_ref(run.artifact_refs["context_pack"], run.workspace_path)
+        if context_path is not None:
+            record_successful_context_memory(str(context_path))
     return {
         "run_id": run.run_id,
         "status": run.status,
@@ -1764,6 +2048,7 @@ def autopilot_checkpoint_tool(
         "blocking_reason": run.blocking_reason,
         "resume_prompt": run.resume_prompt,
         "artifact_refs": run.artifact_refs,
+        "review_state": run.review_state,
         "active_state_path": run.active_state_path,
     }
 

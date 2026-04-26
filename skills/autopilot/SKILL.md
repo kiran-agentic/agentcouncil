@@ -1,8 +1,8 @@
 ---
 name: autopilot
 description: Council-governed autonomous delivery. Claude follows workflow recipes to plan and build; independent agents review at every stage transition. The full pipeline — spec, plan, build, verify, ship — with review loops and conditional challenge gates.
-allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_checkpoint mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
-argument-hint: [what to build — describe the feature, fix, or change] [backend=<review-profile>] [challenge_backend=<challenge-profile>]
+allowed-tools: mcp__agentcouncil__autopilot_prepare mcp__agentcouncil__autopilot_context_pack mcp__agentcouncil__autopilot_checkpoint mcp__agentcouncil__autopilot_start mcp__agentcouncil__autopilot_status mcp__agentcouncil__autopilot_resume mcp__agentcouncil__review_loop mcp__agentcouncil__challenge
+argument-hint: [what to build — describe the feature, fix, or change] [backend=<review-profile>] [challenge_backend=<challenge-profile>] [review_depth=<legacy|fast|balanced|deep>] [lead_review_model=<model>]
 ---
 
 # AgentCouncil Autopilot
@@ -21,12 +21,14 @@ spec_prep → REVIEW_LOOP → plan → REVIEW_LOOP → build → REVIEW_LOOP →
 Parse optional backend arguments from `$ARGUMENTS` before Step 0:
 - `backend=<profile>` selects the outside reviewer backend for every `review_loop` gate.
 - `challenge_backend=<profile>` selects the outside attacker backend for the `challenge` gate.
+- `review_depth=<legacy|fast|balanced|deep>` selects review-loop speed/depth. Default is `legacy` for 0.3.x compatibility. Use `balanced` for opt-in faster gates. `fast` and `balanced` are single-pass review gates: revise the artifact yourself, then re-run the gate with `prior_review_context`.
+- `lead_review_model=<model>` selects only the internal lead-review subprocess used by `review_loop`; it does not change the active Claude Code session that writes specs, plans, or code.
 - If `challenge_backend` is omitted, use `backend`.
 - If both are omitted, omit the backend parameter and let AgentCouncil use the configured default profile.
 
 Model choice is via named profiles in `.agentcouncil.json` or `~/.agentcouncil.json`. Example: `/autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging`. Non-gate stages run on the active Claude Code lead model; `/autopilot` does not create separate implementation subagents or choose a different model for spec, plan, build, verify, or ship.
 
-Record these as `REVIEW_BACKEND` and `CHALLENGE_BACKEND`.
+Record these as `REVIEW_BACKEND`, `CHALLENGE_BACKEND`, `REVIEW_DEPTH`, and `LEAD_REVIEW_MODEL`. If `review_depth` is omitted, set `REVIEW_DEPTH="legacy"`. If `lead_review_model` is omitted, leave `LEAD_REVIEW_MODEL` unset.
 
 ## Protocol — follow these steps exactly
 
@@ -121,6 +123,15 @@ Immediately call `mcp__agentcouncil__autopilot_checkpoint`:
 - **required_tool**: `"review_loop"`
 - **artifact_refs**: `{"spec": "docs/autopilot/specs/{spec_id}.md"}`
 
+Immediately call `mcp__agentcouncil__autopilot_context_pack`:
+- **run_id**: the returned run id
+- **stage**: `"spec_prep"`
+- **changed_files**: `target_files`
+- **artifact_refs**: `{"spec": "docs/autopilot/specs/{spec_id}.md"}`
+- **refresh_policy**: `"force"`
+
+Save the returned `summary` as `REVIEW_CONTEXT`. This is a compact, sanitized context pack that reviewers must use before broad repository exploration. If context generation fails, continue to the review gate only if you still have the full artifact text, target files or changed files, test command hints, and backend workspace access or embedded diff. Otherwise checkpoint `protocol_step="blocked_on_context_pack"` with the missing inputs and stop.
+
 ### Step 4: Gate — review the spec
 
 Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
@@ -129,6 +140,9 @@ Call `mcp__agentcouncil__review_loop` to get independent review of the spec:
 - **review_objective**: `"Review this spec for completeness, feasibility, and risk before planning begins"`
 - **focus_areas**: `["requirements clarity", "acceptance criteria testability", "testing strategy completeness", "behavioral boundaries defined", "scope boundaries", "missing edge cases"]`
 - **backend**: `REVIEW_BACKEND` if set
+- **review_context**: `REVIEW_CONTEXT` if set
+- **review_depth**: `REVIEW_DEPTH`
+- **lead_review_model**: `LEAD_REVIEW_MODEL` if set
 
 **Handle the gate decision from `final_verdict`:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="spec_review_passed"`, `stage="spec_prep"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 5
@@ -190,6 +204,9 @@ Call `mcp__agentcouncil__review_loop`:
 - **review_objective**: `"Review this implementation plan for completeness, ordering, risk, and verification coverage"`
 - **focus_areas**: `["task decomposition", "dependency ordering", "acceptance probe coverage", "scope creep"]`
 - **backend**: `REVIEW_BACKEND` if set
+- **review_context**: `REVIEW_CONTEXT` if set
+- **review_depth**: `REVIEW_DEPTH`
+- **lead_review_model**: `LEAD_REVIEW_MODEL` if set
 
 **Handle the gate decision:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="plan_review_passed"`, `stage="plan"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 7 (do NOT ask the user for confirmation — autopilot is autonomous)
@@ -290,6 +307,9 @@ Call `mcp__agentcouncil__review_loop`:
 - **review_objective**: `"Review the implementation for correctness, quality, and spec compliance"`
 - **focus_areas**: `["correctness", "test coverage", "spec compliance", "code quality", "security"]`
 - **backend**: `REVIEW_BACKEND` if set
+- **review_context**: `REVIEW_CONTEXT` if set
+- **review_depth**: `REVIEW_DEPTH`
+- **lead_review_model**: `LEAD_REVIEW_MODEL` if set
 
 **Handle the gate decision:**
 - **`pass`** → call `autopilot_checkpoint` with `protocol_step="build_review_passed"`, `stage="build"`, `stage_status="advanced"`, `gate_decision="pass"`, then proceed to Step 9

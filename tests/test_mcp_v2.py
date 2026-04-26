@@ -10,9 +10,21 @@ import json
 
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from agentcouncil.providers.base import ProviderError
 from agentcouncil.server import mcp
+
+
+def test_extract_run_id_from_context_pack_reference():
+    import agentcouncil.server as server_mod
+
+    assert (
+        server_mod._extract_run_id_from_review_context(
+            "Run-local context pack: docs/autopilot/runs/run-85c435fdcb01/context.json"
+        )
+        == "run-85c435fdcb01"
+    )
 
 
 @pytest.fixture
@@ -241,6 +253,31 @@ async def test_mcp_review_loop_falls_back_on_unexpected_provider_exception(journ
 
 
 @pytest.mark.asyncio
+async def test_mcp_review_loop_balanced_does_not_legacy_fallback(journal_dir, monkeypatch):
+    """Balanced mode should surface provider failure instead of doubling runtime via fallback."""
+    import agentcouncil.server as server_mod
+    from agentcouncil.adapters import StubAdapter
+
+    def _make_stub_provider(*a, **kw):
+        raise ProviderError("Failed to reconnect to codex")
+
+    def _unexpected_fallback(*a, **kw):
+        raise AssertionError("balanced review should not invoke legacy fallback")
+
+    monkeypatch.setattr(server_mod, "_make_provider", _make_stub_provider)
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter", _unexpected_fallback)
+    monkeypatch.setattr(server_mod, "ClaudeAdapter", lambda *a, **kw: StubAdapter([]))
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="Failed to reconnect to codex"):
+            await client.call_tool("review_loop", {
+                "artifact": "spec body",
+                "artifact_type": "plan",
+                "review_depth": "balanced",
+            })
+
+
+@pytest.mark.asyncio
 async def test_mcp_review_loop_compacts_large_success_payload(journal_dir, monkeypatch):
     """Large successful review_loop results are compacted for MCP transport."""
     import agentcouncil.convergence as conv_mod
@@ -290,7 +327,16 @@ async def test_mcp_review_loop_compacts_large_success_payload(journal_dir, monke
 
     assert not result.is_error
     assert result.data["response_truncated"] is True
+    assert result.data["reviewer_provenance"]["review_depth"] == "legacy"
+    assert result.data["reviewer_provenance"]["fallback_used"] is True
     assert len(result.data["final_findings"]) <= server_mod._MCP_REVIEW_LOOP_FINDINGS_LIMIT
+    assert result.data["findings_summary"][0] == {
+        "id": "F0",
+        "title": "Finding 0",
+        "severity": "high",
+        "origin": "outside",
+    }
+    assert len(result.data["findings_summary"]) == 20
     assert json.dumps(result.data, ensure_ascii=False)
     assert len(json.dumps(result.data, ensure_ascii=False)) <= server_mod._MCP_REVIEW_LOOP_RESPONSE_CHAR_BUDGET
 

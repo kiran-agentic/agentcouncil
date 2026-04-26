@@ -15,6 +15,10 @@ def test_autopilot_skill_requires_resume_guard_and_checkpoint_tool():
     assert "mcp__agentcouncil__autopilot_checkpoint" in text
     assert "backend=<profile>" in text
     assert "challenge_backend=<profile>" in text
+    assert "review_depth=<legacy|fast|balanced|deep>" in text
+    assert "lead_review_model=<model>" in text
+    assert "mcp__agentcouncil__autopilot_context_pack" in text
+    assert "review_context" in text
     assert "review_backend=REVIEW_BACKEND" in text
     assert "backend**: `REVIEW_BACKEND` if set" in text
     assert "backend**: `CHALLENGE_BACKEND` if set" in text

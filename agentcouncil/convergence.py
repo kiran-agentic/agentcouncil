@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from typing import Any, List, Optional
 
 from agentcouncil.adapters import AgentAdapter
@@ -184,6 +185,8 @@ async def review_loop(
     file_paths: Optional[list[str]] = None,
     workspace_access: str = "none",
     prior_review_context: Optional[str] = None,
+    review_context: Optional[str] = None,
+    review_depth: str = "legacy",
 ) -> ConvergenceResult:
     """Run an iterative review convergence loop (CL-01, CL-02).
 
@@ -206,6 +209,8 @@ async def review_loop(
     """
     # CL-12: Hard cap
     effective_max = min(max_iterations, MAX_ITERATIONS)
+    started_at = time.perf_counter()
+    parallel_initial = review_depth in {"fast", "balanced", "deep"}
 
     iterations: list[ConvergenceIteration] = []
     current_findings: list[Finding] = []
@@ -220,13 +225,21 @@ async def review_loop(
         rounds=1,
         file_paths=file_paths or [],
         prior_review_context=prior_review_context,
+        review_context=review_context,
     )
 
+    initial_started = time.perf_counter()
     review_result = await review(
         review_input, outside_adapter, lead_adapter,
         on_event=on_event, outside_meta=outside_meta,
         workspace_access=workspace_access,
+        parallel_initial=parallel_initial,
     )
+    initial_elapsed = time.perf_counter() - initial_started
+    base_timing: dict[str, float | str] = {
+        "review_depth": review_depth,
+        "initial_review_seconds": round(initial_elapsed, 3),
+    }
 
     # Extract findings from initial review
     current_findings = _extract_findings(review_result.artifact)
@@ -250,6 +263,21 @@ async def review_loop(
             total_iterations=1,
             exit_reason="all_verified",
             final_verdict="pass",
+            timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
+        )
+
+    # Fast/balanced gates are reviewer gates, not automatic fix/re-review loops.
+    # Returning after the first synthesized review keeps the latency budget
+    # predictable and lets the caller apply real artifact revisions before
+    # re-entering review_loop with prior_review_context.
+    if review_depth in {"fast", "balanced"}:
+        return ConvergenceResult(
+            iterations=iterations,
+            final_findings=current_findings,
+            total_iterations=1,
+            exit_reason="single_pass_review_depth",
+            final_verdict=_derive_verdict(finding_statuses),
+            timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
         )
 
     # Native-workspace short-circuit: when the outside agent reads files directly,
@@ -264,6 +292,7 @@ async def review_loop(
             total_iterations=1,
             exit_reason="native_workspace_single_pass",
             final_verdict=_derive_verdict(finding_statuses),
+            timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
         )
 
     # Iterations 2..N: fix-describe → scoped re-review → update statuses.
@@ -324,6 +353,7 @@ async def review_loop(
                 total_iterations=iter_num,
                 exit_reason="approved",
                 final_verdict=_derive_verdict(finding_statuses),
+                timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
             )
 
         if all(s in ("verified", "wont_fix") for s in finding_statuses.values()):
@@ -333,6 +363,7 @@ async def review_loop(
                 total_iterations=iter_num,
                 exit_reason="all_verified",
                 final_verdict=_derive_verdict(finding_statuses),
+                timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
             )
 
     return ConvergenceResult(
@@ -341,6 +372,7 @@ async def review_loop(
         total_iterations=len(iterations),
         exit_reason="max_iterations",
         final_verdict=_derive_verdict(finding_statuses),
+        timing={**base_timing, "total_seconds": round(time.perf_counter() - started_at, 3)},
     )
 
 

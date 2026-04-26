@@ -523,6 +523,35 @@ def test_make_provider_claude_binary_present(monkeypatch):
     assert isinstance(provider, ClaudeProvider)
 
 
+def test_parent_process_cwd_skips_plugin_cache_wrapper(monkeypatch):
+    """Workspace resolution walks past uv/plugin-cache parents to Claude cwd."""
+    import agentcouncil.server as server_mod
+
+    monkeypatch.setattr(server_mod.os, "getppid", lambda: 100)
+    cwd_by_pid = {
+        100: "/Users/me/.claude/plugins/cache/agentcouncil/agentcouncil/0.3.0",
+        90: "/Users/me/Documents/Project-Jarvis",
+    }
+    parent_by_pid = {100: 90}
+    monkeypatch.setattr(server_mod, "_process_cwd", lambda pid: cwd_by_pid.get(pid))
+    monkeypatch.setattr(server_mod, "_process_parent_pid", lambda pid: parent_by_pid.get(pid))
+
+    assert server_mod._parent_process_cwd() == "/Users/me/Documents/Project-Jarvis"
+
+
+def test_resolve_workspace_sync_refuses_home_fallback(monkeypatch):
+    """Workspace resolution must not fall back to the user home directory."""
+    import agentcouncil.server as server_mod
+
+    monkeypatch.setattr(server_mod, "_resolved_workspace", None)
+    monkeypatch.delenv("AGENTCOUNCIL_CWD", raising=False)
+    monkeypatch.setattr(server_mod, "_parent_process_cwd", lambda: None)
+    monkeypatch.setattr(server_mod.Path, "cwd", lambda: server_mod.Path("/Users/me/.claude/plugins/cache/agentcouncil"))
+
+    with pytest.raises(RuntimeError, match="could not resolve the project workspace"):
+        server_mod._resolve_workspace_sync()
+
+
 def test_get_backend_info_returns_capability_keys(monkeypatch):
     """get_outside_backend_info_tool returns session_strategy, workspace_access, supports_runtime_tools."""
     monkeypatch.setattr(

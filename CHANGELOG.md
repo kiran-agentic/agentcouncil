@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.1 (2026-04-26)
+
+Patch release for the 0.3.0 autopilot workflow, focused on faster opt-in review gates and safer durable state.
+
+### Features
+
+- **Autopilot review speed controls:** `review_depth=fast|balanced|deep|legacy` and `lead_review_model=<model>` let users opt into faster review gates while preserving 0.3.0 legacy behavior by default.
+- **ReviewContextPack:** New `autopilot_context_pack` MCP tool creates a sanitized, per-run context artifact and reuses distilled global project facts to reduce repeated reviewer discovery work.
+- **Review observability:** `review_loop` records reviewer provenance, elapsed timing, budget, backend, lead review model, and blocked status into `autopilot_status`.
+- **Manifest-driven project discovery:** Autopilot prep and context generation now detect common Python, JavaScript/TypeScript, Go, Rust, and test manifests instead of assuming Python-only projects.
+
+### Fixes
+
+- Balanced and fast review modes now surface provider failures as blocked states instead of silently falling back into a long legacy path.
+- MCP provider adapters receive review-depth timeouts, preventing shorter review modes from being held by the old 900-second default.
+- Workspace resolution walks past plugin-cache wrapper processes to find the real Claude Code project directory.
+- Workspace resolution no longer falls back to the user home directory when project detection fails.
+- Project-local autopilot state stores context-pack refs as project-relative paths to avoid leaking private absolute paths.
+- `review_loop` can recover run ids from context-pack references, allowing durable review status updates during resumed autopilot runs.
+
+### Security
+
+- Context packs exclude `.mcp.json`, env files, Claude/Codex/Serena folders, dependency directories, and build outputs.
+- Context-pack payloads redact common API keys, GitHub tokens, Google API keys, AWS access keys, AWS ARNs, signed URLs, JWT-like strings, secret-like assignments, and user home paths.
+
 ## 0.3.0 (2026-04-25)
 
 Second public release. This version expands AgentCouncil from one-shot deliberation protocols into a broader workflow system with persistent history, iterative review loops, richer provenance, and an autopilot workflow for governed delivery inside Claude Code.
