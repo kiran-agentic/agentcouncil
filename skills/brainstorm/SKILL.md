@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Run the AgentCouncil deliberation protocol. You (Claude) act as orchestrator AND lead agent. An independent outside agent provides a second perspective via the AgentCouncil session API. Use when you want genuinely independent perspectives before converging on a decision.
+description: Run the AgentCouncil deliberation protocol. You (the host agent) act as orchestrator AND lead agent. An independent outside agent provides a second perspective via the AgentCouncil session API. Use when you want genuinely independent perspectives before converging on a decision.
 allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_read mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [topic or question to brainstorm]
 ---
@@ -50,7 +50,7 @@ Call `mcp__agentcouncil__outside_start` with `prompt` set to the brief text, `pr
 
 The outside agent is processing the brief in the background. Write your own independent proposal NOW — do not wait. You have the full conversation context — use it. Be specific and opinionated.
 
-Display it clearly labeled as **Claude's proposal**.
+Display it clearly labeled as **Lead agent's proposal**.
 
 **Independence is preserved** because the brief was neutral (no opinion) and you have not read the outside agent's response yet. Both agents think independently.
 

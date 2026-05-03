@@ -240,6 +240,43 @@ async def review_loop(
         "review_depth": review_depth,
         "initial_review_seconds": round(initial_elapsed, 3),
     }
+    if review_result.deliberation_status == ConsensusStatus.partial_failure:
+        summary = getattr(review_result.artifact, "summary", None) or (
+            "Review protocol returned partial_failure."
+        )
+        failure = Finding(
+            id="review-partial-failure",
+            title="Review protocol did not complete",
+            severity="high",
+            impact="The gate cannot establish independent reviewer coverage.",
+            description=summary,
+            evidence=summary,
+            locations=file_paths or [],
+            confidence="high",
+            agreement="confirmed",
+            origin="both",
+        )
+        return ConvergenceResult(
+            iterations=[
+                ConvergenceIteration(
+                    iteration=1,
+                    findings=[
+                        FindingIteration(
+                            finding_id=failure.id,
+                            status=FindingStatus.open,
+                        )
+                    ],
+                )
+            ],
+            final_findings=[failure],
+            total_iterations=1,
+            exit_reason="partial_failure",
+            final_verdict="escalate",
+            timing={
+                **base_timing,
+                "total_seconds": round(time.perf_counter() - started_at, 3),
+            },
+        )
 
     # Extract findings from initial review
     current_findings = _extract_findings(review_result.artifact)

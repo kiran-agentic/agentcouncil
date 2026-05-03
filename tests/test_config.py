@@ -222,6 +222,124 @@ def test_profile_loader_resolve_default(tmp_path, monkeypatch):
     assert result.provider == "ollama"
 
 
+def test_profile_loader_explicit_builtin_backend_overrides_default_profile(tmp_path, monkeypatch):
+    """Explicit legacy backend names must not be swallowed by default_profile."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_PROFILE", raising=False)
+
+    (tmp_path / ".agentcouncil.json").write_text(
+        json.dumps({
+            "default_profile": "codex-outside",
+            "profiles": {"codex-outside": {"provider": "codex"}},
+        })
+    )
+
+    result = ProfileLoader().resolve("claude")
+    assert result == "claude"
+
+
+def test_profile_loader_unknown_explicit_profile_raises(tmp_path, monkeypatch):
+    """Misspelled explicit backend/profile names must not fall through to defaults."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_PROFILE", raising=False)
+
+    (tmp_path / ".agentcouncil.json").write_text(
+        json.dumps({
+            "default_profile": "codex-outside",
+            "profiles": {"codex-outside": {"provider": "codex"}},
+        })
+    )
+
+    with pytest.raises(ValueError, match="Unknown backend/profile"):
+        ProfileLoader().resolve("claude-typo")
+
+
+def test_profile_loader_resolve_lead_defaults_to_claude(tmp_path, monkeypatch):
+    """Lead resolution ignores outside default_profile and defaults to claude."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", raising=False)
+    monkeypatch.delenv("AGENTCOUNCIL_LEAD_AGENT", raising=False)
+
+    (tmp_path / ".agentcouncil.json").write_text(
+        json.dumps({
+            "default_profile": "codex-outside",
+            "profiles": {"codex-outside": {"provider": "codex"}},
+        })
+    )
+
+    result = ProfileLoader().resolve_lead()
+    assert result == "claude"
+
+
+def test_profile_loader_resolve_lead_profile_from_config(tmp_path, monkeypatch):
+    """default_lead_profile resolves a named claude/codex profile for lead use."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", raising=False)
+    monkeypatch.delenv("AGENTCOUNCIL_LEAD_AGENT", raising=False)
+
+    (tmp_path / ".agentcouncil.json").write_text(
+        json.dumps({
+            "default_lead_profile": "codex-lead",
+            "profiles": {"codex-lead": {"provider": "codex", "model": "o4-mini"}},
+        })
+    )
+
+    result = ProfileLoader().resolve_lead()
+    assert isinstance(result, BackendProfile)
+    assert result.provider == "codex"
+    assert result.model == "o4-mini"
+
+
+def test_profile_loader_resolve_lead_env_profile_wins(tmp_path, monkeypatch):
+    """AGENTCOUNCIL_DEFAULT_LEAD_PROFILE overrides project default_lead_profile."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", "env-lead")
+    monkeypatch.delenv("AGENTCOUNCIL_LEAD_AGENT", raising=False)
+
+    (tmp_path / ".agentcouncil.json").write_text(
+        json.dumps({
+            "default_lead_profile": "project-lead",
+            "profiles": {
+                "project-lead": {"provider": "claude", "model": "sonnet"},
+                "env-lead": {"provider": "codex", "model": "gpt-5"},
+            },
+        })
+    )
+
+    result = ProfileLoader().resolve_lead()
+    assert isinstance(result, BackendProfile)
+    assert result.provider == "codex"
+    assert result.model == "gpt-5"
+
+
+def test_profile_loader_resolve_lead_legacy_env(tmp_path, monkeypatch):
+    """AGENTCOUNCIL_LEAD_AGENT is the legacy fallback before default claude."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", raising=False)
+    monkeypatch.setenv("AGENTCOUNCIL_LEAD_AGENT", "codex")
+
+    result = ProfileLoader().resolve_lead()
+    assert result == "codex"
+
+
 # ---------------------------------------------------------------------------
 # ConfigSource enum test
 # ---------------------------------------------------------------------------
@@ -339,6 +457,25 @@ def test_effective_config_legacy_env(tmp_path, monkeypatch):
     assert "legacy_backend" in report
     assert report["legacy_backend"]["value"] == "claude"
     assert report["legacy_backend"]["source"] == "legacy_env_var"
+
+
+def test_effective_config_reports_lead_fields(tmp_path, monkeypatch):
+    """CFG-05: effective report includes default and legacy lead selections."""
+    monkeypatch.chdir(tmp_path)
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", "codex-lead")
+    monkeypatch.setenv("AGENTCOUNCIL_LEAD_AGENT", "claude")
+
+    cfg = AgentCouncilConfig()
+    loader = ProfileLoader(config=cfg)
+    report = loader.effective_report()
+
+    assert report["default_lead_profile"]["value"] == "codex-lead"
+    assert report["default_lead_profile"]["source"] == "env_var"
+    assert report["legacy_lead_backend"]["value"] == "claude"
+    assert report["legacy_lead_backend"]["source"] == "legacy_env_var"
 
 
 # ---------------------------------------------------------------------------

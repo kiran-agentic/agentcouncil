@@ -1,6 +1,6 @@
 ---
 name: challenge
-description: Run the AgentCouncil challenge protocol. You (Claude) send the plan and defend it. An independent outside agent attacks assumptions and finds failure modes via the AgentCouncil session API. Use when you want adversarial stress-testing before shipping.
+description: Run the AgentCouncil challenge protocol. You (the host agent) send the plan and defend it. An independent outside agent attacks assumptions and finds failure modes via the AgentCouncil session API. Use when you want adversarial stress-testing before shipping.
 allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [plan or design to stress-test]
 ---

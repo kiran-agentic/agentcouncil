@@ -1,19 +1,19 @@
 # Architecture
 
-Technical design of AgentCouncil for contributors and advanced users. Throughout this document, "Claude Code" refers to the host environment that orchestrates protocols; "Claude" in protocol descriptions refers to Claude Code's role; the "outside agent" is a separate LLM session.
+Technical design of AgentCouncil for contributors and advanced users. Throughout this document, "host agent" means the active coding assistant that loads the AgentCouncil skills, such as Claude Code or Codex. The "outside agent" is a separate LLM session.
 
 ## How It Works
 
-AgentCouncil runs as a Claude Code plugin. When you type `/brainstorm`, `/review`, `/decide`, or `/challenge`, Claude Code loads the skill instructions and executes the protocol step by step.
+AgentCouncil runs as a plugin for Claude Code and Codex. When you invoke `brainstorm`, `review`, `decide`, or `challenge`, the host agent loads the skill instructions and executes the protocol step by step.
 
 ```
-User types /brainstorm
+User invokes brainstorm
      │
      ▼
-Claude Code loads skills/brainstorm/SKILL.md
+Host agent loads skills/brainstorm/SKILL.md
      │
      ▼
-Claude follows the protocol steps:
+Host agent follows the protocol steps:
   - Writes its own proposal (using full conversation context)
   - Sends neutral brief to outside agent via MCP tools
   - Reads outside agent's response
@@ -207,12 +207,12 @@ The four deliberation functions are also exposed as MCP tools for library-mode u
 
 | Tool | Signature | Purpose |
 |------|-----------|---------|
-| `autopilot_prepare` | `(intent, spec_id, title, objective, requirements, acceptance_criteria, tier=2, target_files=None, escalation_level="normal")` | Validate spec, classify tier, create run |
+| `autopilot_prepare` | `(intent, spec_id, title, objective, requirements, acceptance_criteria, tier=2, target_files=None, escalation_level="normal", review_backend=None, challenge_backend=None, lead_backend=None, lead_model=None)` | Validate spec, classify tier, create run |
 | `autopilot_start` | `(run_id)` | Execute the full pipeline from spec_prep through ship |
-| `autopilot_status` | `(run_id)` | Inspect current run state, stages, and gate decisions |
+| `autopilot_status` | `(run_id)` | Inspect current run state, stages, gate decisions, and stored gate backends |
 | `autopilot_resume` | `(run_id)` | Continue a paused run from the blocked stage |
 
-These tools accept no backend, profile, or model arguments. In practice, most users should think of them as the infrastructure layer under the higher-level `/autopilot` skill. Gate execution in this low-level path currently uses stub protocol artifacts via `_run_gate()`, not backend-selected protocol sessions.
+In practice, most users should think of these as the infrastructure layer under the higher-level `/autopilot` skill. `autopilot_prepare` and `autopilot_checkpoint` can store outside review/challenge backends separately from the lead backend/model. When `AGENTCOUNCIL_AUTOPILOT_GATES=1` is set, `autopilot_start` and `autopilot_resume` use those stored settings for real backend-selected gate protocol sessions. Without that flag, the typed pipeline keeps the compatibility stub gate path.
 
 ## Config System
 
@@ -466,22 +466,22 @@ Note: The built-in provider strings `codex` and `claude` are dispatched directly
 
 ## Protocol Design
 
-Each protocol gives Claude Code and the outside agent **distinct roles**:
+Each protocol gives the host agent and the outside agent **distinct roles**:
 
-| Protocol | Claude Code | Outside Agent |
+| Protocol | Host Agent | Outside Agent |
 |----------|-------------|--------------|
 | **brainstorm** | Proposes first (full context) | Proposes independently (brief only), then they negotiate |
 | **review** | Frames what to review, responds to findings | Reviews independently, produces findings |
 | **decide** | Defines options and criteria, adds context | Evaluates each option independently |
 | **challenge** | Defends the plan with evidence | Attacks assumptions, finds failure modes |
 
-Only brainstorm has bilateral independence (both propose blind). The other three have Claude Code in a specific role — framer, definer, or defender — not duplicating the outside agent's work.
+Only brainstorm has bilateral independence (both propose blind). The other three have the host agent in a specific role — framer, definer, or defender — not duplicating the outside agent's work.
 
 ## Library Mode (Secondary)
 
-The Python package also exposes full protocol tools via MCP (`brainstorm`, `review`, `decide`, `challenge` tools in `server.py`). These use a different execution model: the lead is a CLI subprocess with no conversation context, and outside agents use the `OutsideSession`/`OutsideRuntime` stack. Library mode is functional but secondary — skill mode is the primary interface. PROTOCOLS.md describes skill-mode behavior.
+The Python package also exposes full protocol tools via MCP (`brainstorm`, `review`, `decide`, `challenge` tools in `server.py`). These use a different execution model: the lead is a CLI subprocess with no conversation context, and outside agents use the `OutsideSession`/`OutsideRuntime` stack. Library-mode lead selection is configurable with `lead_backend`/`lead_model` and supports the native `claude` and `codex` CLI adapters. Skill mode remains host-driven: Claude Code or Codex runs the skills, and backend settings choose the outside reviewer/attacker sessions rather than replacing the active host.
 
-Key difference: In library-mode brainstorm, the outside agent proposes first and the lead reacts (outside-first). In skill mode, Claude proposes first with full context (lead-first). A future release may unify the protocol semantics between the two modes.
+Key difference: In library-mode brainstorm, the outside agent proposes first and the lead reacts (outside-first). In skill mode, the host agent proposes first with full context (lead-first). A future release may unify the protocol semantics between the two modes.
 
 ## Autopilot Pipeline (v2.0)
 
@@ -552,16 +552,17 @@ Tier is classified at run creation (`classify_run` in router.py) and can promote
 
 ### MCP Tools
 
-Four tools exposed via `server.py`. These tools accept no backend, profile, or model arguments:
-- `autopilot_prepare` — validate spec, classify tier, create run
-- `autopilot_start` — execute the full pipeline
-- `autopilot_status` — inspect current run state
-- `autopilot_resume` — continue a paused run from the blocked stage
+Autopilot tools exposed via `server.py`:
+- `autopilot_prepare` — validate spec, classify tier, create run, and persist optional `review_backend`, `challenge_backend`, `lead_backend`, and `lead_model`
+- `autopilot_start` — execute the full pipeline using stored gate settings
+- `autopilot_status` — inspect current run state, stages, gate decisions, and stored backend selections
+- `autopilot_checkpoint` — record durable protocol progress and optional backend selection updates
+- `autopilot_resume` — continue a paused run from the blocked stage using stored gate settings
 
 ### Known Limitations (v2.0)
 
 - `plan` and `build` stages use stub runners — real implementations deferred
-- Gates currently use stub protocol artifacts via `_run_gate()`, not real backend-selected protocol sessions
+- Real backend-selected gates are opt-in with `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise the typed MCP pipeline uses stub gate artifacts for compatibility
 - Lineage validators (validate_plan_lineage, etc.) are exported but not called at runtime
 - Single-client model — no concurrency guards on start/resume
 

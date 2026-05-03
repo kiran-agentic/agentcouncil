@@ -7,21 +7,30 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 [![Tests](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml/badge.svg)](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml)
 
-The biggest release in `0.3.0`: **`/autopilot`**.
+Newest in `0.4.0`: **configurable lead agents and native Codex plugin packaging**.
 
-AgentCouncil now ships a council-governed autonomous delivery workflow for Claude Code. You start with **`/autopilot`**, AgentCouncil writes and reviews the spec, plans the work, builds it, re-reviews the build, verifies the result, and only then moves toward shipping.
+AgentCouncil now lets MCP/library protocol callers choose **Claude or Codex as the lead agent** while keeping the outside reviewer, challenger, or deliberation partner independently configurable. It also ships Codex plugin metadata so the same council workflows can run natively with Codex as the host agent.
 
-Underneath that headline feature, AgentCouncil still provides its core multi-agent protocols: `/brainstorm`, `/review`, `/decide`, `/challenge`, and `/inspect`. Claude Code works with an outside agent that stays independent by role, backend, and session. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
+Underneath that headline feature, AgentCouncil still provides its core multi-agent protocols: `/brainstorm`, `/review`, `/decide`, `/challenge`, and `/inspect`. The host agent, Claude Code or Codex, works with an outside agent that stays independent by role, backend, and session. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
 
 </div>
 
 ---
 
-## What's New In 0.3.x
+## What's New In 0.4.0
 
-The `0.3.x` series is centered on **`/autopilot`**:
+This release makes lead-agent selection first-class in MCP/library mode:
 
-- **`/autopilot`** is now the headline workflow: a governed implementation skill for Claude Code with spec, planning, build, review, verification, and ship stages.
+- **Configurable lead agent:** `brainstorm`, `review`, `decide`, `challenge`, `review_loop`, and `protocol_resume` accept `lead_backend=` and `lead_model=`.
+- **Native lead adapters:** `lead_backend` may be `claude`, `codex`, or a named profile backed by one of those native CLI providers. Claude still defaults to `opus`; Codex uses the Codex CLI default unless configured.
+- **Independent outside selection:** `backend` continues to select the outside agent. Same-backend pairings are allowed with separate sessions and recorded as `same_backend_fresh_session`.
+- **Autopilot gate wiring:** lower-level MCP autopilot runs persist `lead_backend`/`lead_model` and use them for real gate execution when `AGENTCOUNCIL_AUTOPILOT_GATES=1`.
+- **Native Codex plugin surface:** `.codex-plugin/plugin.json` and `.mcp.json` let Codex load AgentCouncil skills and MCP tools directly. Skill wording is host-neutral so Codex and Claude Code can both be the lead in skill mode.
+- **Release hardening:** explicit unknown backend/profile names now fail closed, real gate transcripts carry lead/outside provenance, real review/challenge/review_loop gates run certification checks, and partial review failures escalate instead of passing.
+
+The `0.3.x` series added the current **`/autopilot`** workflow foundation:
+
+- **`/autopilot`** is the governed implementation skill for Claude Code with spec, planning, build, review, verification, and ship stages.
 - **`0.3.1` patch:** adds opt-in faster review gates with `review_depth=fast|balanced`, sanitized `ReviewContextPack` artifacts, review timing/status visibility, and safer project-local autopilot state.
 - **Deliberation Journal** stores every protocol run under `~/.agentcouncil/journal/` with transcript, artifact, provenance, and status metadata.
 - **`/review --loop` convergence mode** tracks findings across iterations until they are verified, reopened, or explicitly accepted.
@@ -33,7 +42,7 @@ The `0.3.x` series is centered on **`/autopilot`**:
 
 | Capability | What it gives you |
 |:---|:---|
-| `/autopilot` | The main governed delivery skill for Claude Code |
+| `/autopilot` | Governed delivery with the active host agent doing implementation |
 | Protocols | Independent proposal, review, decision, and challenge workflows |
 | Convergence | Iterative review loops that track finding status across passes |
 | Journal + Inspect | Persistent history and session replay for past deliberations |
@@ -42,23 +51,23 @@ The `0.3.x` series is centered on **`/autopilot`**:
 
 ## Core Skills
 
-Claude Code (referred to as "Claude" in protocol descriptions below) orchestrates these skills. The outside agent is a separate LLM session.
+Claude Code or Codex orchestrates these skills as the host agent. The outside agent is a separate LLM session.
 
 | You're asking... | Command | What happens |
 |:---|:---|:---|
 | "Build this with council gates" | `/autopilot` | Writes a spec, reviews it, plans, builds, verifies, and keeps council gates in the loop |
 | "What should we do?" | `/brainstorm` | Both agents propose independently, then negotiate toward consensus |
-| "Is this good?" | `/review` | Claude Code frames the question, outside agent reviews independently |
+| "Is this good?" | `/review` | The host agent frames the question, outside agent reviews independently |
 | "Review iteratively" | `/review --loop` | Iterative review: findings → describe fix → re-review → verify |
-| "Which one?" | `/decide` | Claude Code defines options, outside agent evaluates each one |
-| "Will this break?" | `/challenge` | Outside agent attacks assumptions, Claude Code defends |
+| "Which one?" | `/decide` | The host agent defines options, outside agent evaluates each one |
+| "Will this break?" | `/challenge` | Outside agent attacks assumptions, the host agent defends |
 | "What happened?" | `/inspect` | View past deliberation sessions from the journal |
 
 > **Release headline:** start with `/autopilot` when you want AgentCouncil to drive delivery, and use the other skills when you want focused deliberation.
 
 ## Autopilot
 
-AgentCouncil now includes an **`/autopilot` skill** for Claude Code. It is the primary user-facing workflow for autonomous delivery with council review built in.
+AgentCouncil now includes an **`/autopilot` skill** for Claude Code and Codex. It is the primary user-facing workflow for autonomous delivery with council review built in.
 
 **What `/autopilot` does:**
 
@@ -69,7 +78,7 @@ AgentCouncil now includes an **`/autopilot` skill** for Claude Code. It is the p
 - builds the change, gathers evidence, and reviews the build
 - verifies acceptance criteria before shipping
 
-The skill is designed to keep Claude doing the implementation work while AgentCouncil's review and challenge tools provide stage gates.
+The skill is designed to keep the active host agent doing the implementation work while AgentCouncil's review and challenge tools provide stage gates.
 
 Choose the review/challenge model with backend profiles:
 
@@ -77,7 +86,7 @@ Choose the review/challenge model with backend profiles:
 /autopilot backend=openrouter-gpt challenge_backend=bedrock-sonnet Add audit logging
 ```
 
-`backend` is used for all `review_loop` gates. `challenge_backend` is used for the conditional adversarial challenge gate and defaults to `backend` when omitted. The spec, plan, build, verify, and ship work runs on the active Claude Code lead model.
+`backend` is used for all `review_loop` gates. `challenge_backend` is used for the conditional adversarial challenge gate and defaults to `backend` when omitted. The spec, plan, build, verify, and ship work runs on the active host model.
 
 For `0.3.x`, review speed is opt-in so existing Opus-based review behavior remains compatible:
 
@@ -85,7 +94,7 @@ For `0.3.x`, review speed is opt-in so existing Opus-based review behavior remai
 /autopilot review_depth=balanced lead_review_model=sonnet Add audit logging
 ```
 
-`review_depth=legacy` preserves the current behavior. `fast` and `balanced` run the independent outside reviewer and internal lead-review subprocess in parallel, return a single consolidated pass, and leave actual revisions to the lead agent before a re-review. `deep` keeps the longer iterative convergence behavior. `lead_review_model` applies only to that internal review subprocess, not to the Claude Code session doing the implementation.
+`review_depth=legacy` preserves the current behavior. `fast` and `balanced` run the independent outside reviewer and internal lead-review subprocess in parallel, return a single consolidated pass, and leave actual revisions to the lead agent before a re-review. `deep` keeps the longer iterative convergence behavior. `lead_review_model` applies only to that internal review subprocess, not to the host session doing the implementation.
 
 ### `/autopilot` flow
 
@@ -95,7 +104,7 @@ spec_prep → review_loop → plan → review_loop → build → review_loop →
 
 ### Autopilot infrastructure
 
-Under the hood, `0.3.0` also adds a typed MCP autopilot pipeline with durable run state:
+Under the hood, AgentCouncil also includes a typed MCP autopilot pipeline with durable run state:
 
 Each stage produces a typed artifact (SpecPrepArtifact, PlanArtifact, etc.). Stages with gates (`spec_prep`, `plan`, and `build` use review_loop; `verify` uses challenge conditionally) must pass before advancing. Gates can advance, request revision, or block for human approval. During long gates, `autopilot_status` exposes `review_state` with backend, lead model, budget, elapsed timing, and reviewer provenance.
 
@@ -121,7 +130,7 @@ Tier only promotes (never demotes). Sensitive file detection during execution ca
 
 ### Current Status
 
-- **Use `/autopilot` as the main Claude Code experience.** It is the best way to exercise the workflow end to end today.
+- **Use `/autopilot` as the main host-agent experience.** It is the best way to exercise the workflow end to end today.
 - **The typed MCP autopilot tools are available now** for run creation, checkpointing, persistence, tier classification, status, and resume.
 - **The MCP autopilot path is still evolving.** Its gate execution and some runner behavior remain more infrastructure-oriented than the higher-level `/autopilot` skill experience.
 
@@ -129,10 +138,10 @@ Tier only promotes (never demotes). Sensitive file detection during execution ca
 
 ### Prerequisites
 
-1. [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the host environment
+1. Claude Code or Codex — the host environment
 2. macOS or Linux (Windows support planned for a future release)
 
-That's all you need. Claude is the default outside agent backend — it's already available inside Claude Code with zero configuration.
+That's all you need. Claude is the default outside agent backend. In Codex, install and authenticate the `claude` CLI or configure a different default backend such as `codex`.
 
 <details>
 <summary><strong>Optional: additional backends</strong></summary>
@@ -152,7 +161,7 @@ See [BACKENDS.md](docs/BACKENDS.md) for all supported backends including OpenRou
 
 </details>
 
-### Install
+### Install In Claude Code
 
 Add the plugin from the marketplace, then install it:
 
@@ -209,6 +218,16 @@ cp -r skills/ .claude/skills/
 ```
 
 </details>
+
+### Install In Codex
+
+AgentCouncil now includes Codex plugin metadata:
+
+- `.codex-plugin/plugin.json` declares the Codex plugin, shared skills, and interface metadata.
+- `.mcp.json` starts the local AgentCouncil MCP server through `scripts/start-server.sh`.
+- `scripts/start-server.sh` understands both Codex and Claude plugin environment variables.
+
+When installed as a Codex plugin, Codex loads the same `skills/` workflows and acts as the host lead. Use `backend=claude` for a native Claude outside reviewer, `backend=codex` for a separate fresh Codex outside session, or named profiles from `.agentcouncil.json`.
 
 ### Upgrade
 
@@ -409,7 +428,7 @@ pytest -m real
 **Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. For skill-only changes, copying `skills/` is enough. For full workflow or server changes, sync the cached plugin copy:
 
 ```bash
-PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.3.0
+PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.4.0
 
 rsync -a --delete agentcouncil/ "$PLUGIN/agentcouncil/"
 rsync -a --delete skills/ "$PLUGIN/skills/"

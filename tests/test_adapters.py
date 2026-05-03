@@ -9,6 +9,8 @@ from agentcouncil.adapters import (
     AgentAdapter,
     ClaudeAdapter,
     CodexAdapter,
+    resolve_lead_adapter,
+    resolve_lead_backend,
     StubAdapter,
 )
 
@@ -352,6 +354,54 @@ def test_claude_timeout_forwarded_to_subprocess(monkeypatch):
     adapter.call("hello")
 
     assert captured_kwargs["timeout"] == 90
+
+
+# ---------------------------------------------------------------------------
+# Lead backend resolver
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_lead_backend_defaults_to_claude(monkeypatch):
+    """Lead backend defaults to claude independently of outside backend env."""
+    monkeypatch.delenv("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE", raising=False)
+    monkeypatch.delenv("AGENTCOUNCIL_LEAD_AGENT", raising=False)
+    monkeypatch.setenv("AGENTCOUNCIL_OUTSIDE_AGENT", "codex")
+
+    assert resolve_lead_backend() == "claude"
+
+
+def test_resolve_lead_adapter_codex_uses_codex_adapter(monkeypatch):
+    """Explicit lead_backend=codex creates a CodexAdapter."""
+    monkeypatch.setattr("shutil.which", lambda name: "/fake/bin" if name == "codex" else None)
+
+    adapter = resolve_lead_adapter("codex", timeout=60, model="gpt-5")
+
+    assert isinstance(adapter, CodexAdapter)
+    assert adapter._timeout == 60
+    assert adapter._model == "gpt-5"
+
+
+def test_resolve_lead_adapter_claude_defaults_to_opus(monkeypatch):
+    """Claude lead preserves the existing opus default model."""
+    monkeypatch.setattr("shutil.which", lambda name: "/fake/bin" if name == "claude" else None)
+
+    adapter = resolve_lead_adapter("claude")
+
+    assert isinstance(adapter, ClaudeAdapter)
+    assert adapter._model == "opus"
+
+
+def test_resolve_lead_adapter_rejects_non_native_profile(monkeypatch):
+    """Only claude/codex providers are valid lead profiles."""
+    from agentcouncil.config import AgentCouncilConfig, BackendProfile, ProfileLoader
+
+    cfg = AgentCouncilConfig(
+        profiles={"ollama-lead": BackendProfile(provider="ollama", model="llama3")}
+    )
+    loader = ProfileLoader(config=cfg)
+
+    with pytest.raises(ValueError, match="Lead backend must be one of"):
+        resolve_lead_adapter("ollama-lead", loader=loader)
 
 
 # ---------------------------------------------------------------------------

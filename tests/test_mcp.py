@@ -234,6 +234,38 @@ async def test_transcript_has_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_brainstorm_accepts_codex_lead_backend(monkeypatch):
+    """MCP brainstorm can use codex as the lead while outside remains separate."""
+    import agentcouncil.server as server_mod
+
+    outside_stub = StubAdapter([_STUB_OUTSIDE_PROPOSAL, _STUB_NEGOTIATION_JSON])
+    lead_stub = StubAdapter([_STUB_LEAD_PROPOSAL])
+
+    monkeypatch.setattr(
+        server_mod,
+        "_make_provider",
+        lambda *a, **kw: (_ for _ in ()).throw(ValueError("stub: force legacy path")),
+    )
+    monkeypatch.setattr(server_mod, "resolve_outside_backend", lambda *a, **kw: "codex")
+    monkeypatch.setattr(server_mod, "resolve_outside_adapter", lambda *a, **kw: outside_stub)
+    monkeypatch.setattr(server_mod, "CodexAdapter", lambda *a, **kw: lead_stub, raising=False)
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("brainstorm", {
+            "context": "how should we cache session data?",
+            "backend": "codex",
+            "lead_backend": "codex",
+        })
+
+    assert not result.is_error
+    assert len(lead_stub.calls) == 1
+    meta = result.data["transcript"]["meta"]
+    assert meta["lead_backend"] == "codex"
+    assert meta["outside_backend"] == "codex"
+    assert meta["independence_tier"] == "same_backend_fresh_session"
+
+
+@pytest.mark.asyncio
 async def test_transcript_brief_prompt_contains_problem(monkeypatch):
     """MCP-02: the brief_prompt in transcript reflects the context that was passed in."""
     _patch_adapters(monkeypatch)

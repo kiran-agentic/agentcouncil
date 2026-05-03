@@ -1,6 +1,6 @@
 # Protocols
 
-AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for iterative workflows, multi-agent panels, and specialist consultation. Each protocol convenes Claude Code (the orchestrator, referred to as "Claude" below) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other built-in providers). Protocols also serve as stage gates in the v2.0 Autopilot pipeline, where the GateNormalizer translates protocol verdicts into advance/revise/block decisions.
+AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for iterative workflows, multi-agent panels, and specialist consultation. Each protocol convenes the active host agent (Claude Code or Codex) and an outside agent — with different roles depending on the protocol. The outside agent can be Codex, a fresh Claude session, or any configured backend (Ollama, OpenRouter, Bedrock, Kiro, or other built-in providers). Protocols also serve as stage gates in the v2.0 Autopilot pipeline, where the GateNormalizer translates protocol verdicts into advance/revise/block decisions.
 
 ## Quick Chooser
 
@@ -19,9 +19,9 @@ AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for i
 | | Brainstorm | Review | Decide | Challenge |
 |---|-----------|--------|--------|-----------|
 | **Purpose** | Generate and converge on solutions | Get independent critique | Compare options | Stress-test before shipping |
-| **Claude Code's role** | Proposes independently | Frames question, responds to findings | Defines decision space, adds context | Defends the plan |
+| **Host agent's role** | Proposes independently | Frames question, responds to findings | Defines decision space, adds context | Defends the plan |
 | **Outside agent's role** | Proposes independently | Reviews with fresh eyes | Evaluates options | Attacks assumptions |
-| **Independence** | Bilateral -- both propose blind | One-directional -- outside reviews blind | One-directional -- outside evaluates blind | Adversarial -- outside attacks, Claude defends |
+| **Independence** | Bilateral -- both propose blind | One-directional -- outside reviews blind | One-directional -- outside evaluates blind | Adversarial -- outside attacks, host defends |
 | **Default rounds** | 1 | 1 | 1 | 2 |
 | **Output** | Consensus direction | Severity-rated findings with verdict | Option assessments with winner | Failure modes with readiness verdict |
 | **Invocation** | `/brainstorm` | `/review` | `/decide` | `/challenge` |
@@ -37,12 +37,12 @@ AgentCouncil provides four deliberation protocols plus v2.0 infrastructure for i
 Both agents form independent positions before seeing each other's work.
 
 ```
-[1] Claude writes its proposal (full conversation context)
+[1] Host agent writes its proposal (full conversation context)
          ┌─────────────────────────────────────┐
          │ Outside agent has NOT seen anything  │
          └─────────────────────────────────────┘
-[2] Claude sends neutral brief ────► Outside proposes independently
-[3] Claude shares its proposal ────► Outside compares, pushes back
+[2] Host agent sends neutral brief ────► Outside proposes independently
+[3] Host agent shares its proposal ────► Outside compares, pushes back
 [4] Exchange rounds (if disagreements)
 [5] Outside synthesizes ──────────► ConsensusArtifact JSON
 ```
@@ -51,28 +51,28 @@ Both agents form independent positions before seeing each other's work.
 
 ### Review
 
-Claude frames the review question. The outside agent reviews independently.
+The host agent frames the review question. The outside agent reviews independently.
 
 ```
-[1] Claude gathers context — what to review, what files, what question
-[2] Claude sends directed review request ────► Outside reviews independently
+[1] Host agent gathers context — what to review, what files, what question
+[2] Host agent sends directed review request ────► Outside reviews independently
      (file paths, focus areas, concerns)        (findings with severity + evidence)
-[3] Claude responds to findings with codebase knowledge
+[3] Host agent responds to findings with codebase knowledge
      (confirms, disputes with evidence, adds context)
 [4] Outside synthesizes ────────────────────► ReviewArtifact JSON
 ```
 
-**When to use:** Work is done. You want independent critique from fresh eyes. Claude is the builder responding to feedback, not a second reviewer.
+**When to use:** Work is done. You want independent critique from fresh eyes. The host agent is the builder responding to feedback, not a second reviewer.
 
 ### Decide
 
-Claude defines the decision space. The outside agent evaluates the options.
+The host agent defines the decision space. The outside agent evaluates the options.
 
 ```
-[1] Claude identifies decision, options, criteria, constraints
-[2] Claude sends evaluation request ────► Outside evaluates each option
+[1] Host agent identifies decision, options, criteria, constraints
+[2] Host agent sends evaluation request ────► Outside evaluates each option
      (options + file paths for context)    (pros, cons, risks, confidence per option)
-[3] Claude responds with codebase context
+[3] Host agent responds with codebase context
      (corrects assumptions, adds evidence)
 [4] Outside synthesizes ───────────────► DecideArtifact JSON
 ```
@@ -81,15 +81,15 @@ Claude defines the decision space. The outside agent evaluates the options.
 
 ### Challenge
 
-Claude sends the plan. The outside agent attacks it. Claude defends.
+The host agent sends the plan. The outside agent attacks it. The host agent defends.
 
 ```
-[1] Claude identifies target, assumptions, success criteria
-[2] Claude sends attack brief ──────► Outside attacks assumptions
+[1] Host agent identifies target, assumptions, success criteria
+[2] Host agent sends attack brief ──────► Outside attacks assumptions
      (plan + assumptions + file paths)  (failure modes, break conditions)
-[3] Claude DEFENDS against attacks with evidence
+[3] Host agent DEFENDS against attacks with evidence
 [4] Outside attacks the defense (default: 1 more round)
-[5] Claude counter-defends
+[5] Host agent counter-defends
 [6] Outside synthesizes ──────────► ChallengeArtifact JSON
 ```
 
@@ -224,8 +224,8 @@ The normalizer translates protocol-specific verdicts into uniform gate decisions
 
 ### Backend Selection
 
-The `/autopilot` skill supports `backend=<profile>` for all `review_loop` gates and `challenge_backend=<profile>` for the conditional `challenge` gate. These select the outside reviewer/attacker model via named backend profiles. Non-gate stages run on the active Claude Code lead model.
+The `/autopilot` skill supports `backend=<profile>` for all `review_loop` gates and `challenge_backend=<profile>` for the conditional `challenge` gate. These select the outside reviewer/attacker model via named backend profiles. Non-gate stages run on the active host model.
 
 ### Current Limitations
 
-The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level Claude Code skill, and the `plan` and `build` runners are still evolving. Real typed-pipeline gate execution is available only when `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise it uses stub gate artifacts for compatibility. Use the `/autopilot` skill for the clearest end-to-end experience today.
+The low-level MCP autopilot path (`autopilot_prepare`, `autopilot_start`, `autopilot_resume`, `autopilot_status`) remains more infrastructure-oriented than the higher-level host-agent skill, and the `plan` and `build` runners are still evolving. Real typed-pipeline gate execution is available only when `AGENTCOUNCIL_AUTOPILOT_GATES=1`; otherwise it uses stub gate artifacts for compatibility. Use the `/autopilot` skill for the clearest end-to-end experience today.

@@ -1,0 +1,40 @@
+{
+  "name": "agentcouncil",
+  "version": "0.4.0",
+  "description": "Multi-agent deliberation protocols for Codex: brainstorm, review, decide, challenge, inspect, and autopilot gates with independent agents.",
+  "author": {
+    "name": "Kiran Krishna"
+  },
+  "homepage": "https://github.com/kiran-agentic/agentcouncil",
+  "repository": "https://github.com/kiran-agentic/agentcouncil",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agents",
+    "codex",
+    "code-review",
+    "deliberation",
+    "mcp",
+    "multi-agent"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "AgentCouncil",
+    "shortDescription": "Independent agent review and deliberation for Codex",
+    "longDescription": "AgentCouncil adds native Codex workflows for multi-agent brainstorms, reviews, decisions, challenges, inspection, and council-governed autopilot gates. Codex stays the host agent while AgentCouncil runs independent outside sessions through configured backends such as Claude, Codex, Ollama, OpenRouter, Bedrock, or Kiro.",
+    "developerName": "Kiran Krishna",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/kiran-agentic/agentcouncil",
+    "defaultPrompt": [
+      "Run an AgentCouncil review with Claude outside",
+      "Brainstorm this design with an independent agent",
+      "Challenge this plan before I ship it"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

@@ -24,6 +24,8 @@ log = logging.getLogger("agentcouncil.server")
 
 from agentcouncil.adapters import (
     ClaudeAdapter,
+    CodexAdapter,
+    resolve_lead_settings,
     resolve_outside_adapter, resolve_outside_backend,
 )
 from agentcouncil.config import ProfileLoader, BackendProfile, set_project_dir
@@ -70,7 +72,7 @@ __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.3.1")
+mcp = FastMCP("agentcouncil", version="0.4.0")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -461,12 +463,48 @@ def _make_provider(
         raise ProviderError(f"Unknown provider: {bp.provider!r}")
 
 
-def _build_meta(outside_backend: str, outside_transport: str) -> TranscriptMeta:
+def _resolve_lead_selection(
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
+    default_claude_model: str | None = "opus",
+) -> tuple[str, str | None]:
+    """Resolve lead provider/model for MCP library-mode tools."""
+    return resolve_lead_settings(
+        backend=lead_backend,
+        model=lead_model,
+        default_claude_model=default_claude_model,
+    )
+
+
+def _make_lead_adapter(
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
+    timeout: int = 900,
+    default_claude_model: str | None = "opus",
+) -> tuple[object, str, str | None]:
+    """Create the lead adapter and return (adapter, provider, model)."""
+    provider_name, effective_model = _resolve_lead_selection(
+        lead_backend,
+        lead_model,
+        default_claude_model=default_claude_model,
+    )
+    if provider_name == "claude":
+        return ClaudeAdapter(model=effective_model, timeout=timeout), provider_name, effective_model
+    if provider_name == "codex":
+        return CodexAdapter(model=effective_model, timeout=timeout), provider_name, effective_model
+    raise ValueError(f"Unknown lead backend: {provider_name!r}")
+
+
+def _build_meta(
+    outside_backend: str,
+    outside_transport: str,
+    lead_backend: str = "claude",
+    lead_model: str | None = "opus",
+) -> TranscriptMeta:
     """Build transcript metadata for provenance tracking."""
-    lead_backend = "claude"
     return TranscriptMeta(
         lead_backend=lead_backend,
-        lead_model="opus",
+        lead_model=lead_model,
         outside_backend=outside_backend,
         outside_model=None,  # resolved at adapter level
         outside_transport=outside_transport,
@@ -718,6 +756,8 @@ async def brainstorm_tool(
     backend: str | None = None,
     outside_agent: str | None = None,
     backends: list[str] | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Run the AgentCouncil deliberation protocol and return a consensus artifact.
@@ -757,14 +797,23 @@ async def brainstorm_tool(
 
     await _resolve_workspace(ctx)  # Ensure workspace resolved before provider creation
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    lead, lead_provider, resolved_lead_model = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=900,
+    )
 
     # BP-01: Multi-agent Blind Panel mode
     if backends and len(backends) > 1:
         from agentcouncil.deliberation import brainstorm_panel
         # Build brief first
         if code_context is not None:
-            brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
+            brief_adapter, _, _ = _make_lead_adapter(
+                lead_backend,
+                lead_model,
+                timeout=900,
+                default_claude_model="haiku",
+            )
             builder = BriefBuilder(adapter=brief_adapter)
             excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
             brief = builder.build(context, code_context=excerpts)
@@ -783,7 +832,11 @@ async def brainstorm_tool(
                 outside_adapters.append(OutsideSessionAdapter(session))
                 sessions_to_close.append((provider, session))
 
-            synthesizer = ClaudeAdapter(model="opus", timeout=900)
+            synthesizer, _, _ = _make_lead_adapter(
+                lead_backend,
+                lead_model,
+                timeout=900,
+            )
             result = await brainstorm_panel(
                 brief=brief,
                 outside_adapters=outside_adapters,
@@ -801,7 +854,12 @@ async def brainstorm_tool(
 
     if code_context is not None:
         # Complex context with code — use BriefBuilder to extract structure.
-        brief_adapter = ClaudeAdapter(model="haiku", timeout=900)
+        brief_adapter, _, _ = _make_lead_adapter(
+            lead_backend,
+            lead_model,
+            timeout=900,
+            default_claude_model="haiku",
+        )
         builder = BriefBuilder(adapter=brief_adapter)
         excerpts = [CodeExcerpt(path="caller-supplied", content=code_context)]
         brief = builder.build(context, code_context=excerpts)
@@ -828,20 +886,25 @@ async def brainstorm_tool(
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
+        outside_model = (bp.model if isinstance(bp, BackendProfile) else None) or getattr(provider, "_model", None)
         session = OutsideSession(
             provider, runtime,
-            profile=effective_backend, model=None, provider_name=provider_name,
+            profile=effective_backend, model=outside_model, provider_name=provider_name,
         )
         await session.open()
         try:
             outside = OutsideSessionAdapter(session)
             meta = TranscriptMeta(
-                lead_backend="claude",
-                lead_model="opus",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
                 outside_backend=provider_name,
                 outside_model=session.model,
                 outside_transport="session",
-                independence_tier="cross_backend",
+                independence_tier=(
+                    "same_backend_fresh_session"
+                    if provider_name == lead_provider
+                    else "cross_backend"
+                ),
                 outside_provider=session.provider_name,
                 outside_profile=session.profile,
                 outside_session_mode=session.session_mode,
@@ -861,7 +924,12 @@ async def brainstorm_tool(
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=900)
-        meta = _build_meta(backend_str, "subprocess")
+        meta = _build_meta(
+            backend_str,
+            "subprocess",
+            lead_backend=lead_provider,
+            lead_model=resolved_lead_model,
+        )
         result = await brainstorm(
             brief=brief,
             outside_adapter=outside,
@@ -883,6 +951,8 @@ async def review_tool(
     rounds: int = 1,
     backend: str | None = None,
     outside_agent: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> dict:
     """Run the AgentCouncil review protocol and return a structured review artifact.
 
@@ -966,7 +1036,11 @@ async def review_tool(
         _gate_model = None
     check_certification_gate("review", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    lead, lead_provider, resolved_lead_model = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=900,
+    )
 
     review_input = ReviewInput(
         artifact=artifact,
@@ -981,20 +1055,25 @@ async def review_tool(
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
+        outside_model = (bp.model if isinstance(bp, BackendProfile) else None) or getattr(provider, "_model", None)
         session = OutsideSession(
             provider, runtime,
-            profile=effective_backend, model=None, provider_name=provider_name,
+            profile=effective_backend, model=outside_model, provider_name=provider_name,
         )
         await session.open()
         try:
             outside = OutsideSessionAdapter(session)
             meta = TranscriptMeta(
-                lead_backend="claude",
-                lead_model="opus",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
                 outside_backend=provider_name,
                 outside_model=session.model,
                 outside_transport="session",
-                independence_tier="cross_backend",
+                independence_tier=(
+                    "same_backend_fresh_session"
+                    if provider_name == lead_provider
+                    else "cross_backend"
+                ),
                 outside_provider=session.provider_name,
                 outside_profile=session.profile,
                 outside_session_mode=session.session_mode,
@@ -1008,7 +1087,12 @@ async def review_tool(
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=900)
-        meta = _build_meta(backend_str, "subprocess")
+        meta = _build_meta(
+            backend_str,
+            "subprocess",
+            lead_backend=lead_provider,
+            lead_model=resolved_lead_model,
+        )
         result = await review(review_input, outside, lead, checkpoint_callback=_checkpoint_cb)
         result.transcript.meta = meta
 
@@ -1025,6 +1109,8 @@ async def decide_tool(
     rounds: int = 1,
     backend: str | None = None,
     outside_agent: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> dict:
     """Run the AgentCouncil decide protocol and return a structured decision artifact.
 
@@ -1058,7 +1144,11 @@ async def decide_tool(
     _t0 = _time.time()
 
     effective_backend = backend or outside_agent
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    lead, lead_provider, resolved_lead_model = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=900,
+    )
 
     decide_options = [DecideOption(**opt) for opt in options]
     decide_input = DecideInput(
@@ -1074,20 +1164,25 @@ async def decide_tool(
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
+        outside_model = (bp.model if isinstance(bp, BackendProfile) else None) or getattr(provider, "_model", None)
         session = OutsideSession(
             provider, runtime,
-            profile=effective_backend, model=None, provider_name=provider_name,
+            profile=effective_backend, model=outside_model, provider_name=provider_name,
         )
         await session.open()
         try:
             outside = OutsideSessionAdapter(session)
             meta = TranscriptMeta(
-                lead_backend="claude",
-                lead_model="opus",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
                 outside_backend=provider_name,
                 outside_model=session.model,
                 outside_transport="session",
-                independence_tier="cross_backend",
+                independence_tier=(
+                    "same_backend_fresh_session"
+                    if provider_name == lead_provider
+                    else "cross_backend"
+                ),
                 outside_provider=session.provider_name,
                 outside_profile=session.profile,
                 outside_session_mode=session.session_mode,
@@ -1101,7 +1196,12 @@ async def decide_tool(
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=900)
-        meta = _build_meta(backend_str, "subprocess")
+        meta = _build_meta(
+            backend_str,
+            "subprocess",
+            lead_backend=lead_provider,
+            lead_model=resolved_lead_model,
+        )
         result = await decide(decide_input, outside, lead)
         result.transcript.meta = meta
 
@@ -1119,6 +1219,8 @@ async def challenge_tool(
     backend: str | None = None,
     outside_agent: str | None = None,
     specialist_provider: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> dict:
     """Run the AgentCouncil challenge protocol -- adversarial stress-testing.
 
@@ -1162,7 +1264,11 @@ async def challenge_tool(
         _gate_model = None
     check_certification_gate("challenge", model_id=_gate_model, profile=effective_backend, cache=CertificationCache())
 
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    lead, lead_provider, resolved_lead_model = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=900,
+    )
 
     challenge_input = ChallengeInput(
         artifact=artifact,
@@ -1177,20 +1283,25 @@ async def challenge_tool(
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
         bp = ProfileLoader().resolve(profile_name=effective_backend)
         provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
+        outside_model = (bp.model if isinstance(bp, BackendProfile) else None) or getattr(provider, "_model", None)
         session = OutsideSession(
             provider, runtime,
-            profile=effective_backend, model=None, provider_name=provider_name,
+            profile=effective_backend, model=outside_model, provider_name=provider_name,
         )
         await session.open()
         try:
             outside = OutsideSessionAdapter(session)
             meta = TranscriptMeta(
-                lead_backend="claude",
-                lead_model="opus",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
                 outside_backend=provider_name,
                 outside_model=session.model,
                 outside_transport="session",
-                independence_tier="cross_backend",
+                independence_tier=(
+                    "same_backend_fresh_session"
+                    if provider_name == lead_provider
+                    else "cross_backend"
+                ),
                 outside_provider=session.provider_name,
                 outside_profile=session.profile,
                 outside_session_mode=session.session_mode,
@@ -1204,7 +1315,12 @@ async def challenge_tool(
         # Legacy backend (codex/claude) — fall back to existing adapter path
         backend_str = resolve_outside_backend(effective_backend)
         outside = resolve_outside_adapter(effective_backend, timeout=900)
-        meta = _build_meta(backend_str, "subprocess")
+        meta = _build_meta(
+            backend_str,
+            "subprocess",
+            lead_backend=lead_provider,
+            lead_model=resolved_lead_model,
+        )
         result = await challenge(challenge_input, outside, lead)
         result.transcript.meta = meta
 
@@ -1470,6 +1586,8 @@ async def protocol_resume_tool(
     session_id: str,
     profile: str | None = None,
     model: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> dict:
     """Resume a checkpointed protocol run from its last phase boundary.
 
@@ -1489,7 +1607,11 @@ async def protocol_resume_tool(
     """
     from agentcouncil.workflow import resume_protocol
 
-    lead = ClaudeAdapter(model="opus", timeout=900)
+    lead, _, _ = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=900,
+    )
 
     try:
         provider = _make_provider(profile=profile, model=model)
@@ -1523,6 +1645,8 @@ async def review_loop_tool(
     review_context: str | None = None,
     review_depth: str = "legacy",
     lead_review_model: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Run an iterative review convergence loop (CL-01).
@@ -1544,6 +1668,11 @@ async def review_loop_tool(
         prior_review_context: Findings from a prior review cycle. Pass on revision
             retries so the reviewer can verify whether prior issues were resolved
             and flag any new issues introduced by the revision.
+        review_context: Sanitized review context pack payload for faster gates.
+        review_depth: Review speed/depth preset (legacy, fast, balanced, deep).
+        lead_review_model: Compatibility model override for review-speed presets.
+        lead_backend: Optional lead backend/profile for MCP/library mode.
+        lead_model: Optional lead model override.
     """
     import time as _time
 
@@ -1560,15 +1689,22 @@ async def review_loop_tool(
         raise ValueError("review_depth must be one of: legacy, fast, balanced, deep")
     cfg = depth_config[review_depth]
     timeout = int(cfg["timeout"])
-    lead_model = lead_review_model or str(cfg["lead_model"])
-    lead = ClaudeAdapter(model=lead_model, timeout=timeout)
+    default_lead_model = str(cfg["lead_model"])
+    lead, lead_provider, resolved_lead_model = _make_lead_adapter(
+        lead_backend,
+        lead_model,
+        timeout=timeout,
+        default_claude_model=default_lead_model,
+    )
     run_id = _extract_run_id_from_review_context(review_context)
     review_started = _time.time()
     provenance: dict[str, Any] = {
         "review_depth": review_depth,
         "timeout_seconds": timeout,
         "backend": backend,
-        "lead_review_model": lead_model,
+        "lead_backend": lead_provider,
+        "lead_model": resolved_lead_model,
+        "lead_review_model": resolved_lead_model,
         "fallback_used": False,
     }
     _checkpoint_review_state(
@@ -1579,7 +1715,9 @@ async def review_loop_tool(
             "started_at": review_started,
             "budget_seconds": timeout,
             "backend": backend,
-            "lead_review_model": lead_model,
+            "lead_backend": lead_provider,
+            "lead_model": resolved_lead_model,
+            "lead_review_model": resolved_lead_model,
             "review_depth": review_depth,
         },
     )
@@ -1595,10 +1733,35 @@ async def review_loop_tool(
         log.warning("review_loop: provider=%s, workspace_access=%s, workspace=%s, backend=%r",
                      type(provider).__name__, ws_access, _get_workspace_sync(), backend)
         runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
-        session = OutsideSession(provider, runtime, profile=backend)
+        bp = ProfileLoader().resolve(profile_name=backend)
+        provider_name = bp.provider if isinstance(bp, BackendProfile) else str(bp)
+        outside_model = (bp.model if isinstance(bp, BackendProfile) else None) or getattr(provider, "_model", None)
+        session = OutsideSession(
+            provider,
+            runtime,
+            profile=backend,
+            model=outside_model,
+            provider_name=provider_name,
+        )
         await session.open()
         try:
             outside = OutsideSessionAdapter(session)
+            meta = TranscriptMeta(
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
+                outside_backend=provider_name,
+                outside_model=session.model,
+                outside_transport="session",
+                independence_tier=(
+                    "same_backend_fresh_session"
+                    if provider_name == lead_provider
+                    else "cross_backend"
+                ),
+                outside_provider=session.provider_name,
+                outside_profile=session.profile,
+                outside_session_mode=session.session_mode,
+                outside_workspace_access=session.workspace_access,
+            )
             result = await review_loop(
                 artifact=artifact,
                 artifact_type=artifact_type,
@@ -1612,6 +1775,7 @@ async def review_loop_tool(
                 prior_review_context=prior_review_context,
                 review_context=review_context,
                 review_depth=review_depth,
+                outside_meta=meta,
             )
         finally:
             await _close_review_loop_resources(provider, session)
@@ -1643,6 +1807,13 @@ async def review_loop_tool(
                 "outside_workspace_access": "none",
                 "outside_transport": "legacy-adapter",
             })
+            backend_str = resolve_outside_backend(backend)
+            meta = _build_meta(
+                backend_str,
+                "subprocess",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
+            )
             result = await review_loop(
                 artifact=artifact,
                 artifact_type=artifact_type,
@@ -1656,6 +1827,7 @@ async def review_loop_tool(
                 prior_review_context=prior_review_context,
                 review_context=review_context,
                 review_depth=review_depth,
+                outside_meta=meta,
             )
         except Exception as fallback_exc:
             log.exception(
@@ -1692,6 +1864,13 @@ async def review_loop_tool(
                 "outside_workspace_access": "none",
                 "outside_transport": "legacy-adapter",
             })
+            backend_str = resolve_outside_backend(backend)
+            meta = _build_meta(
+                backend_str,
+                "subprocess",
+                lead_backend=lead_provider,
+                lead_model=resolved_lead_model,
+            )
             result = await review_loop(
                 artifact=artifact,
                 artifact_type=artifact_type,
@@ -1705,6 +1884,7 @@ async def review_loop_tool(
                 prior_review_context=prior_review_context,
                 review_context=review_context,
                 review_depth=review_depth,
+                outside_meta=meta,
             )
         except Exception as fallback_exc:
             log.exception(
@@ -1795,7 +1975,9 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
                             tier: int = 2, target_files: list[str] | None = None,
                             escalation_level: str = "normal",
                             review_backend: str | None = None,
-                            challenge_backend: str | None = None) -> dict:
+                            challenge_backend: str | None = None,
+                            lead_backend: str | None = None,
+                            lead_model: str | None = None) -> dict:
     """Initialize an autopilot run: validate spec, classify tier, create run state, persist to disk.
 
     Call this before autopilot_start. Returns a run_id to use with other tools.
@@ -1827,6 +2009,8 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         execution_mode="skill",
         review_backend=review_backend,
         challenge_backend=challenge_backend or review_backend,
+        lead_backend=lead_backend,
+        lead_model=lead_model,
         protocol_step="spec_prep_started",
         next_required_action="Write docs/autopilot/active-run.json via autopilot_checkpoint, then run the spec review gate.",
         required_tool="autopilot_checkpoint",
@@ -1847,6 +2031,8 @@ def autopilot_prepare_tool(intent: str, spec_id: str, title: str, objective: str
         "protocol_step": run.protocol_step,
         "review_backend": run.review_backend,
         "challenge_backend": run.challenge_backend,
+        "lead_backend": run.lead_backend,
+        "lead_model": run.lead_model,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
         "resume_prompt": run.resume_prompt,
@@ -1857,6 +2043,8 @@ def _make_autopilot_orchestrator(
     registry: dict | None = None,
     gate_backend: str | None = None,
     challenge_backend: str | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> LinearOrchestrator:
     """Create a LinearOrchestrator with real runners and optional gate executor.
 
@@ -1870,7 +2058,12 @@ def _make_autopilot_orchestrator(
     # Gate executor is opt-in: set AGENTCOUNCIL_AUTOPILOT_GATES=1 to enable
     gate_executor: GateExecutor | None = None
     if os.environ.get("AGENTCOUNCIL_AUTOPILOT_GATES") == "1":
-        gate_executor = GateExecutor(backend=gate_backend, challenge_backend=challenge_backend)
+        gate_executor = GateExecutor(
+            backend=gate_backend,
+            challenge_backend=challenge_backend,
+            lead_backend=lead_backend,
+            lead_model=lead_model,
+        )
 
     return LinearOrchestrator(
         registry=registry,
@@ -1890,8 +2083,10 @@ def autopilot_start_tool(run_id: str) -> dict:
     """Execute the full autopilot pipeline from current stage.
 
     The run must have been created via autopilot_prepare first.
-    Returns the final run state. Uses real runners for all stages and
-    real protocol sessions for gate execution when a backend is available.
+    Returns the final run state. Uses real runners for all stages. Gate
+    execution uses stored backend settings only when real gates are enabled
+    with AGENTCOUNCIL_AUTOPILOT_GATES=1; otherwise gates use compatibility
+    stub artifacts.
     """
     run = load_run(run_id)
     if run.status == "completed":
@@ -1900,6 +2095,8 @@ def autopilot_start_tool(run_id: str) -> dict:
     orchestrator = _make_autopilot_orchestrator(
         gate_backend=run.review_backend,
         challenge_backend=run.challenge_backend,
+        lead_backend=run.lead_backend,
+        lead_model=run.lead_model,
     )
     result = orchestrator.run_pipeline(run)
     return {
@@ -1940,6 +2137,8 @@ def autopilot_status_tool(run_id: str) -> dict:
         "execution_mode": run.execution_mode,
         "review_backend": run.review_backend,
         "challenge_backend": run.challenge_backend,
+        "lead_backend": run.lead_backend,
+        "lead_model": run.lead_model,
         "protocol_step": run.protocol_step,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
@@ -1997,6 +2196,8 @@ def autopilot_checkpoint_tool(
     review_backend: str | None = None,
     challenge_backend: str | None = None,
     review_state: dict[str, Any] | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> dict:
     """Record durable `/autopilot` protocol progress.
 
@@ -2029,6 +2230,8 @@ def autopilot_checkpoint_tool(
         review_backend=review_backend,
         challenge_backend=challenge_backend,
         review_state=review_state,
+        lead_backend=lead_backend,
+        lead_model=lead_model,
     )
     if run.artifact_refs.get("context_pack") and (
         gate_decision in {"pass", "ready"} or protocol_step in {"ship_complete", "completed"}
@@ -2043,6 +2246,8 @@ def autopilot_checkpoint_tool(
         "protocol_step": run.protocol_step,
         "review_backend": run.review_backend,
         "challenge_backend": run.challenge_backend,
+        "lead_backend": run.lead_backend,
+        "lead_model": run.lead_model,
         "next_required_action": run.next_required_action,
         "required_tool": run.required_tool,
         "blocking_reason": run.blocking_reason,
@@ -2070,6 +2275,8 @@ def autopilot_resume_tool(run_id: str) -> dict:
     orchestrator = _make_autopilot_orchestrator(
         gate_backend=run.review_backend,
         challenge_backend=run.challenge_backend,
+        lead_backend=run.lead_backend,
+        lead_model=run.lead_model,
     )
     result = orchestrator.run_pipeline(run, artifact_registry=artifact_reg)
     return {

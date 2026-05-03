@@ -159,6 +159,34 @@ async def test_convergence_loop_no_findings_passes(journal_dir):
 
 
 @pytest.mark.asyncio
+async def test_convergence_loop_partial_review_failure_escalates(journal_dir):
+    """A failed initial review must not be treated as a clean pass."""
+    from agentcouncil.adapters import AdapterError
+    from agentcouncil.convergence import review_loop
+
+    class FailingAdapter:
+        async def acall(self, prompt: str) -> str:
+            raise AdapterError("outside timed out")
+
+        def call(self, prompt: str) -> str:
+            raise AssertionError("sync call should not be used")
+
+    lead = AsyncSleepAdapter([_make_review_json([])], delay=0)
+    result = await review_loop(
+        "artifact",
+        outside_adapter=FailingAdapter(),
+        lead_adapter=lead,
+        review_depth="fast",
+        file_paths=["agentcouncil/server.py"],
+        workspace_access="native",
+    )
+
+    assert result.final_verdict == "escalate"
+    assert result.exit_reason == "partial_failure"
+    assert result.final_findings[0].id == "review-partial-failure"
+
+
+@pytest.mark.asyncio
 async def test_balanced_review_runs_initial_reviews_in_parallel(journal_dir):
     """Balanced mode uses independent outside/lead initial reviews concurrently."""
     from agentcouncil.convergence import review_loop

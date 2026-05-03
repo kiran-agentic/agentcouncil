@@ -1,6 +1,6 @@
 ---
 name: decide
-description: Run the AgentCouncil decide protocol. You (Claude) define the decision space and options. An independent outside agent evaluates via the AgentCouncil session API. Use when you have multiple options and need to pick one.
+description: Run the AgentCouncil decide protocol. You (the host agent) define the decision space and options. An independent outside agent evaluates via the AgentCouncil session API. Use when you have multiple options and need to pick one.
 allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [decision question]
 ---

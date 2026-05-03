@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "./scripts/start-server.sh",
+      "args": [],
+      "cwd": "."
+    }
+  }
+}

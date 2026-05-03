@@ -420,6 +420,7 @@ class ConvergenceResult(BaseModel):
         "approved",
         "native_workspace_single_pass",
         "single_pass_review_depth",
+        "partial_failure",
     ]
     final_verdict: Literal["pass", "revise", "escalate"]
     timing: dict[str, float | str] = Field(default_factory=dict)

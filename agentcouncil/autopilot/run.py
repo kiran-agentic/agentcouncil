@@ -114,6 +114,8 @@ class AutopilotRun(BaseModel):
     execution_mode: Literal["runner", "skill"] = "runner"
     review_backend: Optional[str] = None
     challenge_backend: Optional[str] = None
+    lead_backend: Optional[str] = None
+    lead_model: Optional[str] = None
     protocol_step: str = "spec_prep_started"
     next_required_action: Optional[str] = None
     required_tool: Optional[str] = None
@@ -196,6 +198,8 @@ def _project_state_payload(run: AutopilotRun, active: bool = True) -> dict[str, 
         "execution_mode": run.execution_mode,
         "review_backend": run.review_backend,
         "challenge_backend": run.challenge_backend,
+        "lead_backend": run.lead_backend,
+        "lead_model": run.lead_model,
         "current_stage": run.current_stage,
         "tier": run.tier,
         "protocol_step": run.protocol_step,
@@ -231,6 +235,8 @@ def write_project_state(run: AutopilotRun, workspace_path: str | Path, active: b
             "protocol_step": run.protocol_step,
             "review_backend": run.review_backend,
             "challenge_backend": run.challenge_backend,
+            "lead_backend": run.lead_backend,
+            "lead_model": run.lead_model,
             "next_required_action": run.next_required_action,
             "required_tool": run.required_tool,
             "updated_at": run.updated_at,
@@ -361,6 +367,8 @@ def checkpoint_run(
     review_backend: str | None = None,
     challenge_backend: str | None = None,
     review_state: dict[str, Any] | None = None,
+    lead_backend: str | None = None,
+    lead_model: str | None = None,
 ) -> AutopilotRun:
     """Record a durable protocol checkpoint and optionally mirror it locally."""
     now = time.time()
@@ -375,6 +383,10 @@ def checkpoint_run(
         run.review_backend = review_backend
     if challenge_backend is not None:
         run.challenge_backend = challenge_backend
+    if lead_backend is not None:
+        run.lead_backend = lead_backend
+    if lead_model is not None:
+        run.lead_model = lead_model
     run.protocol_step = protocol_step
     run.next_required_action = next_required_action
     run.required_tool = required_tool

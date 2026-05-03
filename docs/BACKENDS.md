@@ -1,6 +1,6 @@
 # Backends
 
-AgentCouncil supports multiple AI backends as the outside agent. Claude Code (the host environment, referred to as "Claude" in protocol descriptions) orchestrates the deliberation; the outside agent is a separate LLM session. This page explains how to select backends, configure profiles, and understand capability differences.
+AgentCouncil supports multiple AI backends as the outside agent. The active host agent, Claude Code or Codex, orchestrates the deliberation; the outside agent is a separate LLM session. This page explains how to select backends, configure profiles, and understand capability differences.
 
 ## Selecting a Backend
 
@@ -47,26 +47,46 @@ export AGENTCOUNCIL_DEFAULT_PROFILE=local-llama
 
 # Or use the legacy backend string (still supported)
 export AGENTCOUNCIL_OUTSIDE_AGENT=claude
+
+# Select the MCP/library-mode lead agent independently
+export AGENTCOUNCIL_DEFAULT_LEAD_PROFILE=codex-lead
+export AGENTCOUNCIL_LEAD_AGENT=codex
 ```
 
-`AGENTCOUNCIL_DEFAULT_PROFILE` selects a named profile from your config file. `AGENTCOUNCIL_OUTSIDE_AGENT` is the legacy env var — it selects a backend by string name (e.g., `codex`, `claude`) without profile config. Both are supported; the named profile takes precedence.
+`AGENTCOUNCIL_DEFAULT_PROFILE` selects a named profile from your config file. `AGENTCOUNCIL_OUTSIDE_AGENT` is the legacy env var — it selects a backend by string name (e.g., `codex`, `claude`) without profile config. Both are supported; the named profile takes precedence when no explicit backend/profile is passed.
+
+Lead selection is separate from outside-agent selection. The MCP/library protocol tools accept `lead_backend=` and `lead_model=` for the lead-side CLI adapter. `lead_backend` may be `claude`, `codex`, or a named profile whose provider is `claude` or `codex`; other providers remain outside-agent only.
 
 ### Precedence
 
 | Level | Source | Example |
 |-------|--------|---------|
-| 1 (highest) | skill arg | `backend=local-llama` in skill command |
-| 2 | env vars | `AGENTCOUNCIL_DEFAULT_PROFILE=local-llama` |
-| 3 | project config | `.agentcouncil.json` in current directory |
-| 4 | global config | `~/.agentcouncil.json` |
-| 5 | legacy env var | `AGENTCOUNCIL_OUTSIDE_AGENT=claude` |
-| 6 (default) | built-in default | `"claude"` |
+| 1 (highest) | explicit named profile | `backend=local-llama` in skill command |
+| 2 | explicit built-in backend | `backend=claude` or `backend=codex` |
+| 3 | env vars | `AGENTCOUNCIL_DEFAULT_PROFILE=local-llama` |
+| 4 | project config | `.agentcouncil.json` in current directory |
+| 5 | global config | `~/.agentcouncil.json` |
+| 6 | legacy env var | `AGENTCOUNCIL_OUTSIDE_AGENT=claude` |
+| 7 (default) | built-in default | `"claude"` |
+
+Explicit built-in backend names intentionally bypass `default_profile`. For example, if `.agentcouncil.json` sets `default_profile="codex-outside"`, a tool call with `backend="claude"` still uses Claude.
+
+Lead precedence is similar but intentionally ignores outside defaults:
+
+| Level | Source | Example |
+|-------|--------|---------|
+| 1 (highest) | tool arg | `lead_backend=codex` |
+| 2 | env var | `AGENTCOUNCIL_DEFAULT_LEAD_PROFILE=codex-lead` |
+| 3 | project config | `default_lead_profile` in `.agentcouncil.json` |
+| 4 | global config | `default_lead_profile` in `~/.agentcouncil.json` |
+| 5 | legacy env var | `AGENTCOUNCIL_LEAD_AGENT=codex` |
+| 6 (default) | built-in default | `"claude"` with model `"opus"` |
 
 ## Available Backends
 
 | Backend | Install | Required Env Vars | Provider Class |
 |---------|---------|------------------|----------------|
-| claude (default) | Already available in Claude Code | none | `ClaudeProvider` |
+| claude (default) | Claude CLI on PATH; already available in Claude Code | none | `ClaudeProvider` |
 | **codex** | `codex` CLI on PATH | none | `CodexProvider` |
 | **ollama** | `pip install "agentcouncil[ollama]"` | none (local) | `OllamaProvider` |
 | **openrouter** | `pip install "agentcouncil[openrouter]"` | `OPENROUTER_API_KEY` | `OpenRouterProvider` |
@@ -280,10 +300,11 @@ AgentCouncil's core principle is **independence before convergence**. The value 
 
 Different model families with different training data and different biases:
 
-- `codex` (GPT family) + Claude Code (lead)
-- `bedrock` with a non-Claude model + Claude Code (lead)
-- `openrouter` with a non-Claude model + Claude Code (lead)
-- `kiro` (Kiro family) + Claude Code (lead)
+- `codex` (GPT family) + Claude Code host
+- `claude` + Codex host
+- `bedrock` with a non-Claude model + Claude Code or Codex host
+- `openrouter` with a non-Claude model + Claude Code or Codex host
+- `kiro` (Kiro family) + Claude Code or Codex host
 
 Maximum cognitive diversity. Truly independent failure modes. **Recommended for:** high-stakes decisions, architectural choices, security reviews.
 
@@ -291,8 +312,9 @@ Maximum cognitive diversity. Truly independent failure modes. **Recommended for:
 
 Same model family, potentially correlated biases — but protocol independence is preserved (separate sessions, no shared context):
 
-- `claude` subprocess + Claude Code (lead)
-- `ollama` with a Claude-derived model + Claude Code (lead)
+- `claude` subprocess + Claude Code host
+- `codex` subprocess + Codex host
+- `ollama` with a model derived from the same family as the host
 
 **Recommended for:** lower-stakes work, speed-sensitive tasks, fully local environments.
 
@@ -300,7 +322,7 @@ Same model family, potentially correlated biases — but protocol independence i
 
 ### How Independence Varies by Protocol
 
-| Protocol | Claude Code's role | Outside agent's role | Backend matters because... |
+| Protocol | Host agent's role | Outside agent's role | Backend matters because... |
 |----------|--------------|---------------------|---------------------------|
 | **brainstorm** | Proposes independently | Proposes independently | Different model = more diverse proposals |
 | **review** | Frames the review question | Reviews independently | Different model = catches different issues |
@@ -373,9 +395,9 @@ Model selection is done through named profiles. Put the model in `.agentcouncil.
 }
 ```
 
-The normal `/autopilot` spec, plan, build, verify, and ship steps run on the active Claude Code lead model. AgentCouncil only selects models for the independent review/challenge gate sessions.
+The normal `/autopilot` spec, plan, build, verify, and ship steps run on the active host model. AgentCouncil selects models for independent review/challenge gate sessions. In the lower-level MCP autopilot runner, real gates can also set `lead_backend`/`lead_model` so review/challenge gate deliberations use Codex or Claude as the lead-side CLI adapter.
 
-The lower-level `autopilot_prepare` tool also stores `review_backend` and `challenge_backend` in run state. When `AGENTCOUNCIL_AUTOPILOT_GATES=1` enables real gate execution for the typed MCP pipeline, `autopilot_start` and `autopilot_resume` use those stored gate backends. Without that flag, the typed pipeline continues to use stub gate artifacts for compatibility.
+The lower-level `autopilot_prepare` tool also stores `review_backend`, `challenge_backend`, `lead_backend`, and `lead_model` in run state. When `AGENTCOUNCIL_AUTOPILOT_GATES=1` enables real gate execution for the typed MCP pipeline, `autopilot_start` and `autopilot_resume` use those stored gate settings. Without that flag, the typed pipeline continues to use stub gate artifacts for compatibility.
 
 ## Conformance Certification
 
@@ -389,7 +411,7 @@ Certification is done by `ConformanceCertifier` and results are cached in `~/.ag
 
 Certification happens automatically on first use of a gated protocol — no manual step needed. Stale certifications (from an older AgentCouncil version) warn to stderr but do not block execution — they are re-certified automatically.
 
-> **Note:** Conformance certification applies to protocol tools (brainstorm, review, decide, challenge), not autopilot gates. Autopilot gates currently use stub artifacts and do not invoke backend protocol sessions.
+> **Note:** Conformance certification applies to protocol tools (brainstorm, review, decide, challenge). Lower-level autopilot gates use stub artifacts unless `AGENTCOUNCIL_AUTOPILOT_GATES=1` is set; with real gates enabled, review and challenge gate sessions go through the same protocol/certification path as direct tool calls.
 
 ## Auto-Fallback
 

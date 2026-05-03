@@ -12,7 +12,9 @@ from typing import Any
 __all__ = [
     "AgentAdapter", "AdapterError", "CodexAdapter", "ClaudeAdapter",
     "StubAdapter", "CodexSession", "CodexSessionAdapter",
-    "VALID_BACKENDS", "resolve_outside_backend", "resolve_outside_adapter",
+    "VALID_BACKENDS", "VALID_LEAD_BACKENDS",
+    "resolve_outside_backend", "resolve_outside_adapter",
+    "resolve_lead_settings", "resolve_lead_backend", "resolve_lead_adapter",
 ]
 
 
@@ -190,6 +192,7 @@ class StubAdapter(AgentAdapter):
 
 
 VALID_BACKENDS = ("codex", "claude")
+VALID_LEAD_BACKENDS = VALID_BACKENDS
 
 
 def resolve_outside_backend(backend: str | None = None) -> str:
@@ -229,6 +232,78 @@ def resolve_outside_adapter(
         return ClaudeAdapter(model=model, timeout=timeout)
     else:
         raise ValueError(f"Unknown outside agent backend: {resolved}")
+
+
+def resolve_lead_settings(
+    backend: str | None = None,
+    model: str | None = None,
+    loader: Any | None = None,
+    default_claude_model: str | None = None,
+) -> tuple[str, str | None]:
+    """Resolve lead provider/model from explicit args, config, and env."""
+    if loader is None:
+        from agentcouncil.config import ProfileLoader
+
+        loader = ProfileLoader()
+
+    resolved = loader.resolve_lead(profile_name=backend)
+    if isinstance(resolved, str):
+        provider_name = resolved
+        effective_model = model
+    else:
+        provider_name = resolved.provider
+        effective_model = model or resolved.model
+
+    if provider_name not in VALID_LEAD_BACKENDS:
+        raise ValueError(
+            "Lead backend must be one of: "
+            f"{', '.join(VALID_LEAD_BACKENDS)}. Got provider={provider_name!r}."
+        )
+
+    if provider_name == "claude" and default_claude_model is not None:
+        effective_model = effective_model or default_claude_model
+
+    return provider_name, effective_model
+
+
+def resolve_lead_backend(
+    backend: str | None = None,
+    loader: Any | None = None,
+) -> str:
+    """Resolve the lead backend name.
+
+    Lead resolution is independent from outside-agent resolution: outside
+    default_profile and AGENTCOUNCIL_OUTSIDE_AGENT never affect this result.
+    """
+    provider_name, _ = resolve_lead_settings(backend=backend, loader=loader)
+    return provider_name
+
+
+def resolve_lead_adapter(
+    backend: str | None = None,
+    timeout: int = 900,
+    model: str | None = None,
+    cwd: str | None = None,
+    loader: Any | None = None,
+    default_claude_model: str | None = "opus",
+) -> AgentAdapter:
+    """Create an adapter for the lead agent.
+
+    Supported lead providers are Claude and Codex. Claude preserves the historical
+    default model of "opus"; Codex uses its CLI default unless a model is supplied
+    directly or by a named profile.
+    """
+    provider_name, effective_model = resolve_lead_settings(
+        backend=backend,
+        model=model,
+        loader=loader,
+        default_claude_model=default_claude_model,
+    )
+    if provider_name == "claude":
+        return ClaudeAdapter(model=effective_model, timeout=timeout, cwd=cwd)
+    if provider_name == "codex":
+        return CodexAdapter(model=effective_model, timeout=timeout, cwd=cwd)
+    raise ValueError(f"Unknown lead backend: {provider_name}")
 
 
 class CodexSession:
