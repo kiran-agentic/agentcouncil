@@ -798,6 +798,25 @@ class TestMCPTools:
         assert status["review_backend"] == "openrouter-gpt"
         assert status["challenge_backend"] == "bedrock-sonnet"
 
+    def test_prepare_persists_lead_selection(self, tmp_path, monkeypatch):
+        """autopilot_prepare stores lead backend/model choices for real gates."""
+        monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
+        from agentcouncil.server import autopilot_prepare_tool, autopilot_status_tool
+
+        prep = autopilot_prepare_tool(
+            intent="test", spec_id="s1", title="T", objective="O",
+            requirements=["r1"], acceptance_criteria=["ac1"],
+            lead_backend="codex",
+            lead_model="gpt-5",
+        )
+
+        assert prep["lead_backend"] == "codex"
+        assert prep["lead_model"] == "gpt-5"
+
+        status = autopilot_status_tool(run_id=prep["run_id"])
+        assert status["lead_backend"] == "codex"
+        assert status["lead_model"] == "gpt-5"
+
     def test_status_reflects_run(self, tmp_path, monkeypatch):
         """autopilot_status returns current run state."""
         monkeypatch.setattr("agentcouncil.autopilot.run.RUN_DIR", tmp_path)
@@ -838,17 +857,23 @@ class TestMCPTools:
             workspace_path=str(tmp_path),
             review_backend="codex",
             challenge_backend="claude",
+            lead_backend="codex",
+            lead_model="gpt-5",
         )
 
         assert checkpoint["protocol_step"] == "awaiting_build_review"
         assert checkpoint["required_tool"] == "review_loop"
         assert checkpoint["review_backend"] == "codex"
         assert checkpoint["challenge_backend"] == "claude"
+        assert checkpoint["lead_backend"] == "codex"
+        assert checkpoint["lead_model"] == "gpt-5"
         assert checkpoint["active_state_path"].endswith(f"docs/autopilot/runs/{prep['run_id']}/state.json")
 
         status = autopilot_status_tool(run_id=prep["run_id"])
         assert status["next_required_action"] == "Run the build review gate."
         assert status["artifact_refs"]["build"] == "docs/autopilot/runs/build-artifact.json"
+        assert status["lead_backend"] == "codex"
+        assert status["lead_model"] == "gpt-5"
         assert (tmp_path / "docs/autopilot/active-run.json").exists()
 
     def test_start_completes_run(self, tmp_path, monkeypatch):
@@ -2420,3 +2445,255 @@ class TestGateExecutorExceptionPropagates:
         # _run_gate should raise when executor raises
         with pytest.raises(RuntimeError, match="backend unavailable"):
             orchestrator._run_gate("review_loop")
+
+
+class TestGateExecutorLeadSelection:
+    def test_create_session_uses_configured_lead_adapter(self, tmp_path, monkeypatch):
+        """GateExecutor creates its lead adapter from lead_backend/lead_model."""
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+
+        captured = {}
+
+        def fake_lead_adapter(backend=None, timeout=900, model=None, **kwargs):
+            captured["backend"] = backend
+            captured["timeout"] = timeout
+            captured["model"] = model
+            return StubAdapter("lead")
+
+        monkeypatch.setattr(
+            "agentcouncil.server._make_provider",
+            lambda *a, **kw: StubProvider(ProviderResponse(content="outside")),
+        )
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", fake_lead_adapter, raising=False)
+
+        executor = GateExecutor(
+            backend="codex",
+            lead_backend="codex",
+            lead_model="gpt-5",
+        )
+        _provider, _session, _outside, lead, meta = executor._create_session("codex")
+
+        assert isinstance(lead, StubAdapter)
+        assert captured == {"backend": "codex", "timeout": 900, "model": "gpt-5"}
+        assert meta.lead_backend == "codex"
+        assert meta.lead_model == "gpt-5"
+
+    def test_create_session_does_not_promote_legacy_env_over_default_profile(self, tmp_path, monkeypatch):
+        """Omitted gate backend lets _make_provider apply normal config precedence."""
+        import json
+
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+
+        monkeypatch.chdir(tmp_path)
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("AGENTCOUNCIL_OUTSIDE_AGENT", "claude")
+        (tmp_path / ".agentcouncil.json").write_text(
+            json.dumps({
+                "default_profile": "codex-default",
+                "profiles": {"codex-default": {"provider": "codex"}},
+            })
+        )
+
+        captured = {}
+
+        def fake_make_provider(profile=None, workspace=None):
+            captured["profile"] = profile
+            captured["workspace"] = workspace
+            return StubProvider(ProviderResponse(content="outside"))
+
+        monkeypatch.setattr("agentcouncil.server._make_provider", fake_make_provider)
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", lambda *a, **kw: StubAdapter("lead"), raising=False)
+
+        executor = GateExecutor()
+        _provider, _session, _outside, _lead, meta = executor._create_session()
+
+        assert captured == {"profile": None, "workspace": str(tmp_path)}
+        assert meta.outside_backend == "codex"
+
+    def test_create_session_records_provider_default_model(self, tmp_path, monkeypatch):
+        """Gate metadata records provider defaults when profile.model is omitted."""
+        import json
+
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+
+        monkeypatch.chdir(tmp_path)
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home_dir))
+        (tmp_path / ".agentcouncil.json").write_text(
+            json.dumps({
+                "profiles": {"local": {"provider": "ollama"}},
+            })
+        )
+
+        provider = StubProvider(ProviderResponse(content="outside"))
+        provider._model = "llama3"
+
+        monkeypatch.setattr("agentcouncil.server._make_provider", lambda *a, **kw: provider)
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", lambda *a, **kw: StubAdapter("lead"), raising=False)
+
+        executor = GateExecutor(backend="local")
+        _provider, _session, _outside, _lead, meta = executor._create_session()
+
+        assert meta.outside_backend == "ollama"
+        assert meta.outside_model == "llama3"
+
+    def test_run_review_passes_transcript_meta_to_protocol(self, tmp_path, monkeypatch):
+        """Real gate protocol calls carry lead/outside provenance metadata."""
+        from types import SimpleNamespace
+
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+        from agentcouncil.schemas import ReviewArtifact
+
+        monkeypatch.chdir(tmp_path)
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.delenv("AGENTCOUNCIL_OUTSIDE_AGENT", raising=False)
+
+        captured = {}
+        cert_calls = []
+
+        async def fake_review(_review_input, _outside, _lead, **kwargs):
+            captured["outside_meta"] = kwargs.get("outside_meta")
+            return SimpleNamespace(
+                artifact=ReviewArtifact(
+                    verdict="pass",
+                    summary="clean",
+                    findings=[],
+                    strengths=[],
+                    open_questions=[],
+                    next_action="none",
+                )
+            )
+
+        monkeypatch.setattr(
+            "agentcouncil.server._make_provider",
+            lambda *a, **kw: StubProvider(ProviderResponse(content="outside")),
+        )
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", lambda *a, **kw: StubAdapter("lead"), raising=False)
+        monkeypatch.setattr("agentcouncil.review.review", fake_review)
+        monkeypatch.setattr(
+            "agentcouncil.certifier.check_certification_gate",
+            lambda *a, **kw: cert_calls.append((a, kw)),
+        )
+
+        executor = GateExecutor(backend="claude", lead_backend="codex")
+        decision, _raw = executor.run_gate("review", artifact_text="artifact", stage_name="verify")
+
+        assert decision.decision == "advance"
+        meta = captured["outside_meta"]
+        assert meta.lead_backend == "codex"
+        assert meta.outside_backend == "claude"
+        assert meta.independence_tier == "cross_backend"
+        assert cert_calls
+        assert cert_calls[0][0][0] == "review"
+
+    def test_run_brainstorm_builds_valid_brief(self, tmp_path, monkeypatch):
+        """Brainstorm gates build a Brief without invoking BriefBuilder incorrectly."""
+        from types import SimpleNamespace
+
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+        from agentcouncil.schemas import ConsensusArtifact
+
+        monkeypatch.chdir(tmp_path)
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        captured = {}
+
+        async def fake_brainstorm(brief, _outside, _lead, **kwargs):
+            captured["brief"] = brief
+            captured["outside_meta"] = kwargs.get("outside_meta")
+            return SimpleNamespace(
+                artifact=ConsensusArtifact(
+                    recommended_direction="advance",
+                    agreement_points=["ok"],
+                    disagreement_points=[],
+                    rejected_alternatives=[],
+                    open_risks=[],
+                    next_action="advance",
+                    status="consensus",
+                )
+            )
+
+        monkeypatch.setattr(
+            "agentcouncil.server._make_provider",
+            lambda *a, **kw: StubProvider(ProviderResponse(content="outside")),
+        )
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", lambda *a, **kw: StubAdapter("lead"), raising=False)
+        monkeypatch.setattr("agentcouncil.deliberation.brainstorm", fake_brainstorm)
+
+        executor = GateExecutor(backend="claude", lead_backend="codex")
+        decision, _raw = executor.run_gate("brainstorm", artifact_text="stage artifact", stage_name="plan")
+
+        assert decision.decision == "advance"
+        assert captured["brief"].problem_statement == "stage artifact"
+        assert "plan" in captured["brief"].background
+        assert captured["outside_meta"].lead_backend == "codex"
+
+    def test_run_review_loop_applies_certification_gate(self, tmp_path, monkeypatch):
+        """Autopilot review_loop gates use the review certification gate."""
+        from agentcouncil.autopilot import gate as gate_mod
+        from agentcouncil.autopilot.gate import GateExecutor
+        from agentcouncil.adapters import StubAdapter
+        from agentcouncil.providers.base import StubProvider, ProviderResponse
+        from agentcouncil.schemas import ConvergenceResult
+
+        monkeypatch.chdir(tmp_path)
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        cert_calls = []
+
+        async def fake_review_loop(*args, **kwargs):
+            return ConvergenceResult(
+                iterations=[],
+                final_findings=[],
+                total_iterations=1,
+                exit_reason="all_verified",
+                final_verdict="pass",
+            )
+
+        monkeypatch.setattr(
+            "agentcouncil.server._make_provider",
+            lambda *a, **kw: StubProvider(ProviderResponse(content="outside")),
+        )
+        monkeypatch.setattr("agentcouncil.server._get_workspace_sync", lambda: str(tmp_path))
+        monkeypatch.setattr(gate_mod, "resolve_lead_adapter", lambda *a, **kw: StubAdapter("lead"), raising=False)
+        monkeypatch.setattr("agentcouncil.convergence.review_loop", fake_review_loop)
+        monkeypatch.setattr(
+            "agentcouncil.certifier.check_certification_gate",
+            lambda *a, **kw: cert_calls.append((a, kw)),
+        )
+
+        executor = GateExecutor(backend="claude", lead_backend="codex")
+        decision, _raw = executor.run_gate("review_loop", artifact_text="artifact", stage_name="plan")
+
+        assert decision.decision == "advance"
+        assert cert_calls
+        assert cert_calls[0][0][0] == "review"

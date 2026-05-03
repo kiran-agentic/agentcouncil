@@ -144,6 +144,7 @@ class AgentCouncilConfig(BaseSettings):
 
     profiles: dict[str, BackendProfile] = {}
     default_profile: str | None = None
+    default_lead_profile: str | None = None
 
     model_config = {"env_prefix": "AGENTCOUNCIL_", "extra": "ignore"}
 
@@ -196,34 +197,86 @@ class ProfileLoader:
 
         Precedence:
             1. profile_name arg → look up in profiles dict
-            2. config.default_profile → look up in profiles dict
-            3. Built-in provider name passthrough — if profile_name is a
+            2. Built-in provider name passthrough — if profile_name is a
                recognized backend string ("codex", "claude"), it is passed
                through to resolve_outside_backend() so the correct provider
                is dispatched without requiring a named profile.
+            3. config.default_profile → look up in profiles dict
             4. resolve_outside_backend(skill_backend) — legacy fallback (CFG-04)
         """
         # Level 1: explicit profile_name argument
         if profile_name is not None and profile_name in self._config.profiles:
             return self._config.profiles[profile_name]
 
-        # Level 2: default_profile from config (project > global > env > pydantic default)
+        # Level 2: explicit built-in backend passthrough. This must beat
+        # default_profile so backend="claude" cannot be swallowed by a codex
+        # project default.
+        from agentcouncil.adapters import VALID_BACKENDS, resolve_outside_backend
+
+        effective_backend = skill_backend
+        if effective_backend is None and profile_name in VALID_BACKENDS:
+            effective_backend = profile_name
+        if effective_backend is not None:
+            return resolve_outside_backend(effective_backend)
+        if profile_name is not None:
+            raise ValueError(
+                f"Unknown backend/profile: {profile_name!r}. "
+                "Expected a named profile, 'claude', or 'codex'."
+            )
+
+        # Level 3: default_profile from config (project > global > env > pydantic default)
         if (
             self._config.default_profile is not None
             and self._config.default_profile in self._config.profiles
         ):
             return self._config.profiles[self._config.default_profile]
 
-        # Level 3+: legacy fallback — preserves AGENTCOUNCIL_OUTSIDE_AGENT and "claude" default
-        # Pass profile_name as skill_backend when it's a recognized backend string,
-        # so built-in provider names ("codex", "claude") resolve correctly instead
-        # of silently falling through to the default.
-        from agentcouncil.adapters import VALID_BACKENDS, resolve_outside_backend
+        # Level 4: legacy fallback — preserves AGENTCOUNCIL_OUTSIDE_AGENT and
+        # the built-in "claude" default.
+        return resolve_outside_backend(None)
 
-        effective_backend = skill_backend
-        if effective_backend is None and profile_name in VALID_BACKENDS:
-            effective_backend = profile_name
-        return resolve_outside_backend(effective_backend)
+    def resolve_lead(self, profile_name: str | None = None) -> BackendProfile | str:
+        """Resolve the lead agent without consulting outside-agent defaults.
+
+        Precedence:
+            1. explicit profile_name argument
+            2. default_lead_profile from env/config
+            3. AGENTCOUNCIL_LEAD_AGENT
+            4. built-in default "claude"
+        """
+        valid_leads = {"codex", "claude"}
+
+        if profile_name is not None:
+            if profile_name in self._config.profiles:
+                return self._config.profiles[profile_name]
+            if profile_name in valid_leads:
+                return profile_name
+            raise ValueError(
+                f"Unknown lead backend/profile: {profile_name!r}. "
+                "Expected 'claude', 'codex', or a named profile."
+            )
+
+        if self._config.default_lead_profile is not None:
+            default_lead = self._config.default_lead_profile
+            if default_lead in self._config.profiles:
+                return self._config.profiles[default_lead]
+            if default_lead in valid_leads:
+                return default_lead
+            raise ValueError(
+                f"Unknown default_lead_profile: {default_lead!r}. "
+                "Expected 'claude', 'codex', or a named profile."
+            )
+
+        legacy_lead = os.environ.get("AGENTCOUNCIL_LEAD_AGENT")
+        if legacy_lead:
+            if legacy_lead in valid_leads:
+                return legacy_lead
+            raise ValueError(
+                f"Unknown AGENTCOUNCIL_LEAD_AGENT: {legacy_lead!r}. "
+                "Expected 'claude' or 'codex'."
+            )
+
+        return "claude"
 
     def effective_report(self) -> dict[str, dict[str, Any]]:
         """Return per-field source attribution for every config field.
@@ -254,6 +307,9 @@ class ProfileLoader:
         env_val = os.environ.get("AGENTCOUNCIL_DEFAULT_PROFILE")
         if env_val is not None:
             env_dict["default_profile"] = env_val
+        env_lead_val = os.environ.get("AGENTCOUNCIL_DEFAULT_LEAD_PROFILE")
+        if env_lead_val is not None:
+            env_dict["default_lead_profile"] = env_lead_val
         env_profiles = os.environ.get("AGENTCOUNCIL_PROFILES")
         if env_profiles is not None:
             env_dict["profiles"] = env_profiles
@@ -265,7 +321,11 @@ class ProfileLoader:
         merged = self._config
 
         # Fields to report on
-        fields: dict[str, Any] = {"default_profile": None, "profiles": {}}
+        fields: dict[str, Any] = {
+            "default_profile": None,
+            "default_lead_profile": None,
+            "profiles": {},
+        }
 
         # Sources in precedence order (highest to lowest) for field sweep.
         # Note: skill_arg is checked separately via comparison below.
@@ -304,6 +364,12 @@ class ProfileLoader:
         if legacy is not None:
             report["legacy_backend"] = {
                 "value": legacy,
+                "source": ConfigSource.LEGACY_ENV_VAR.value,
+            }
+        legacy_lead = os.environ.get("AGENTCOUNCIL_LEAD_AGENT")
+        if legacy_lead is not None:
+            report["legacy_lead_backend"] = {
+                "value": legacy_lead,
                 "source": ConfigSource.LEGACY_ENV_VAR.value,
             }
 

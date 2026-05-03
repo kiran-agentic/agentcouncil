@@ -85,7 +85,7 @@ def patch_provider(monkeypatch):
 @pytest.mark.asyncio
 async def test_outside_start_returns_session_id(patch_provider):
     """outside_start returns a dict with valid session_id and response."""
-    result = await outside_start_tool(prompt="hello", profile="test")
+    result = await outside_start_tool(prompt="hello", profile="claude")
 
     assert isinstance(result, dict), f"Expected dict, got {type(result)}"
     assert "session_id" in result, f"Missing 'session_id' key: {result}"
@@ -102,7 +102,7 @@ async def test_outside_start_returns_session_id(patch_provider):
 @pytest.mark.asyncio
 async def test_outside_reply_continues_session(patch_provider):
     """outside_reply continues an existing session and returns a response."""
-    start_result = await outside_start_tool(prompt="hello", profile="test")
+    start_result = await outside_start_tool(prompt="hello", profile="claude")
     reply_result = await outside_reply_tool(session_id=start_result["session_id"], prompt="more")
 
     assert isinstance(reply_result, dict)
@@ -119,7 +119,7 @@ async def test_outside_reply_unknown_session(patch_provider):
 @pytest.mark.asyncio
 async def test_outside_close_cleans_up(patch_provider):
     """outside_close returns status=closed and removes session from registry."""
-    start_result = await outside_start_tool(prompt="hello", profile="test")
+    start_result = await outside_start_tool(prompt="hello", profile="claude")
     sid = start_result["session_id"]
     assert sid in _SESSIONS
 
@@ -180,7 +180,7 @@ def test_get_outside_backend_info_legacy_backend(monkeypatch):
 @pytest.mark.asyncio
 async def test_full_session_lifecycle(patch_provider):
     """Full lifecycle: start -> reply -> reply -> close all succeed."""
-    start = await outside_start_tool(prompt="hello", profile="test")
+    start = await outside_start_tool(prompt="hello", profile="claude")
     sid = start["session_id"]
 
     r1 = await outside_reply_tool(session_id=sid, prompt="second")
@@ -283,7 +283,7 @@ async def test_skill_backend_param(patch_skill_provider, monkeypatch):
     monkeypatch.setattr(OutsideSession, "__init__", tracking_init)
 
     # Should not raise; backend= param is accepted
-    result = await review_tool(artifact="test artifact", backend="test-profile")
+    result = await review_tool(artifact="test artifact", backend="claude")
 
     assert isinstance(result, dict)
     assert "artifact" in result
@@ -357,7 +357,7 @@ async def test_skill_workspace_access_flag(monkeypatch):
 
     monkeypatch.setattr("agentcouncil.server.ClaudeAdapter", StubClaudeAdapter)
 
-    await review_tool(artifact="test", backend="test-profile")
+    await review_tool(artifact="test", backend="claude")
 
     assert len(captured_sessions) > 0, "Expected OutsideSession to be captured"
     session = captured_sessions[0]
@@ -606,7 +606,7 @@ async def test_outside_query_uses_provider_pipeline(monkeypatch):
     monkeypatch.setattr("agentcouncil.runtime.OutsideRuntime.run_turn", _fake_run_turn)
     monkeypatch.setattr("agentcouncil.server._SESSIONS", {})
 
-    result = await outside_query_tool("test prompt", outside_agent="my-profile")
+    result = await outside_query_tool("test prompt", outside_agent="claude")
     assert "pipeline response" in result
     assert called_with  # _make_provider was called
 

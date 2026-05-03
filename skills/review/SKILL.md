@@ -1,6 +1,6 @@
 ---
 name: review
-description: Run the AgentCouncil review protocol. You (Claude) frame the review question and direct the outside agent to the right files. The outside agent reviews independently. Use when work is done and you want independent critique. Supports --loop for iterative convergence (fix → re-review → verify until clean).
+description: Run the AgentCouncil review protocol. You (the host agent) frame the review question and direct the outside agent to the right files. The outside agent reviews independently. Use when work is done and you want independent critique. Supports --loop for iterative convergence (fix → re-review → verify until clean).
 allowed-tools: mcp__agentcouncil__outside_start mcp__agentcouncil__outside_reply mcp__agentcouncil__outside_close mcp__agentcouncil__get_outside_backend_info
 argument-hint: [what to review — plan, implementation, milestone, design] [--loop to iterate until clean]
 ---

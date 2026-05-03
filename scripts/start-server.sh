@@ -5,8 +5,9 @@
 
 set -e
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}"
+SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PLUGIN_ROOT="${AGENTCOUNCIL_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_ROOT}}}"
+DATA_DIR="${AGENTCOUNCIL_PLUGIN_DATA:-${CODEX_PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}}}"
 
 # Option 1: uv is available — zero setup needed
 if command -v uv &> /dev/null; then

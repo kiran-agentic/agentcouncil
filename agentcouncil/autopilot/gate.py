@@ -12,26 +12,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
+from agentcouncil.adapters import resolve_lead_adapter, resolve_lead_settings
 from agentcouncil.autopilot.artifacts import GateDecision
 from agentcouncil.autopilot.normalizer import GateNormalizer
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["GateExecutor"]
-
-
-def _get_event_loop() -> asyncio.AbstractEventLoop:
-    """Get or create an event loop for running async protocol code."""
-    try:
-        loop = asyncio.get_running_loop()
-        # If we're already in an async context, we can't use asyncio.run
-        # This shouldn't happen in the autopilot pipeline (synchronous)
-        return loop
-    except RuntimeError:
-        pass
-    return asyncio.new_event_loop()
 
 
 class GateExecutor:
@@ -49,21 +38,27 @@ class GateExecutor:
         self,
         backend: Optional[str] = None,
         challenge_backend: Optional[str] = None,
+        lead_backend: Optional[str] = None,
+        lead_model: Optional[str] = None,
         normalizer: Optional[GateNormalizer] = None,
     ) -> None:
         """Initialize the gate executor.
 
         Args:
-            backend: Named backend profile for the outside agent.
-                Defaults to AGENTCOUNCIL_OUTSIDE_AGENT env var, then None
-                (which lets _make_provider pick the default).
+            backend: Named backend profile for the outside agent. When omitted,
+                _make_provider resolves the configured default profile, legacy
+                env var, then built-in default.
             challenge_backend: Optional backend profile for challenge gates.
                 Defaults to backend when omitted.
+            lead_backend: Optional lead backend/profile. Defaults to the lead
+                resolver's configured default.
+            lead_model: Optional lead model override.
             normalizer: GateNormalizer instance. Defaults to GateNormalizer().
         """
-        import os
-        self._backend = backend or os.environ.get("AGENTCOUNCIL_OUTSIDE_AGENT")
+        self._backend = backend
         self._challenge_backend = challenge_backend or self._backend
+        self._lead_backend = lead_backend
+        self._lead_model = lead_model
         self._normalizer = normalizer or GateNormalizer()
 
     def run_gate(
@@ -114,25 +109,64 @@ class GateExecutor:
     # Protocol runners
     # ------------------------------------------------------------------
 
-    def _create_session(self, backend: Optional[str] = None) -> tuple[Any, Any, Any, Any]:
+    def _create_session(self, backend: Optional[str] = None) -> tuple[Any, Any, Any, Any, Any]:
         """Create outside session + adapter and lead adapter.
 
-        Returns (provider, session, outside_adapter, lead_adapter).
+        Returns (provider, session, outside_adapter, lead_adapter, transcript_meta).
         """
-        from agentcouncil.adapters import ClaudeAdapter
+        from agentcouncil.config import BackendProfile, ProfileLoader
         from agentcouncil.runtime import OutsideRuntime
+        from agentcouncil.schemas import TranscriptMeta
         from agentcouncil.session import OutsideSession, OutsideSessionAdapter
         from agentcouncil.server import _make_provider
 
         from agentcouncil.server import _get_workspace_sync
         selected_backend = self._backend if backend is None else backend
-        provider = _make_provider(profile=selected_backend)
-        runtime = OutsideRuntime(provider, workspace=_get_workspace_sync())
-        session = OutsideSession(provider, runtime, profile=selected_backend)
+        workspace = _get_workspace_sync()
+        provider = _make_provider(profile=selected_backend, workspace=workspace)
+        resolved = ProfileLoader().resolve(profile_name=selected_backend)
+        provider_name = resolved.provider if isinstance(resolved, BackendProfile) else str(resolved)
+        outside_model = (
+            resolved.model if isinstance(resolved, BackendProfile) else None
+        ) or getattr(provider, "_model", None)
+        runtime = OutsideRuntime(provider, workspace=workspace)
+        session = OutsideSession(
+            provider,
+            runtime,
+            profile=selected_backend,
+            model=outside_model,
+            provider_name=provider_name,
+        )
         outside = OutsideSessionAdapter(session)
-        lead = ClaudeAdapter(model="opus", timeout=900)
+        lead_provider, resolved_lead_model = resolve_lead_settings(
+            backend=self._lead_backend,
+            model=self._lead_model,
+            default_claude_model="opus",
+        )
+        lead = resolve_lead_adapter(
+            backend=self._lead_backend,
+            timeout=900,
+            model=self._lead_model,
+            default_claude_model="opus",
+        )
+        meta = TranscriptMeta(
+            lead_backend=lead_provider,
+            lead_model=resolved_lead_model,
+            outside_backend=provider_name,
+            outside_model=session.model,
+            outside_transport="session",
+            independence_tier=(
+                "same_backend_fresh_session"
+                if provider_name == lead_provider
+                else "cross_backend"
+            ),
+            outside_provider=session.provider_name,
+            outside_profile=session.profile,
+            outside_session_mode=session.session_mode,
+            outside_workspace_access=session.workspace_access,
+        )
 
-        return provider, session, outside, lead
+        return provider, session, outside, lead, meta
 
     def _run_in_loop(self, coro: Any, timeout: float = 900) -> Any:
         """Run an async coroutine synchronously with timeout.
@@ -152,6 +186,17 @@ class GateExecutor:
         finally:
             loop.close()
 
+    def _check_certification(self, protocol: str, profile: Optional[str], model_id: Optional[str]) -> None:
+        """Apply the same review/challenge certification gate as direct MCP tools."""
+        from agentcouncil.certifier import CertificationCache, check_certification_gate
+
+        check_certification_gate(
+            protocol,
+            model_id=model_id,
+            profile=profile,
+            cache=CertificationCache(),
+        )
+
     def _run_review_loop(
         self,
         artifact_text: str,
@@ -163,7 +208,8 @@ class GateExecutor:
 
         prior_review_context = kwargs.get("prior_review_context")
 
-        provider, session, outside, lead = self._create_session(self._backend)
+        provider, session, outside, lead, meta = self._create_session(self._backend)
+        self._check_certification("review", session.profile, meta.outside_model)
 
         async def _execute() -> Any:
             await session.open()
@@ -176,6 +222,7 @@ class GateExecutor:
                     review_objective=f"Gate review for stage '{stage_name}'",
                     max_iterations=3,
                     prior_review_context=prior_review_context,
+                    outside_meta=meta,
                 )
                 return result
             finally:
@@ -198,7 +245,8 @@ class GateExecutor:
         from agentcouncil.challenge import challenge
         from agentcouncil.schemas import ChallengeInput
 
-        provider, session, outside, lead = self._create_session(self._challenge_backend)
+        provider, session, outside, lead, meta = self._create_session(self._challenge_backend)
+        self._check_certification("challenge", session.profile, meta.outside_model)
 
         challenge_input = ChallengeInput(
             artifact=artifact_text,
@@ -210,7 +258,7 @@ class GateExecutor:
         async def _execute() -> Any:
             await session.open()
             try:
-                result = await challenge(challenge_input, outside, lead)
+                result = await challenge(challenge_input, outside, lead, outside_meta=meta)
                 return result
             finally:
                 await provider.close()
@@ -234,7 +282,8 @@ class GateExecutor:
         from agentcouncil.review import review
         from agentcouncil.schemas import ReviewInput
 
-        provider, session, outside, lead = self._create_session(self._backend)
+        provider, session, outside, lead, meta = self._create_session(self._backend)
+        self._check_certification("review", session.profile, meta.outside_model)
 
         review_input = ReviewInput(
             artifact=artifact_text,
@@ -244,7 +293,7 @@ class GateExecutor:
         async def _execute() -> Any:
             await session.open()
             try:
-                result = await review(review_input, outside, lead)
+                result = await review(review_input, outside, lead, outside_meta=meta)
                 return result
             finally:
                 await provider.close()
@@ -265,19 +314,22 @@ class GateExecutor:
     ) -> tuple[GateDecision, Any]:
         """Run brainstorm protocol and normalize the result."""
         from agentcouncil.deliberation import brainstorm
-        from agentcouncil.brief import Brief, BriefBuilder
+        from agentcouncil.brief import Brief
 
-        provider, session, outside, lead = self._create_session(self._backend)
+        provider, session, outside, lead, meta = self._create_session(self._backend)
 
-        brief = BriefBuilder(
-            context=artifact_text,
-            question=f"Should stage '{stage_name}' output advance to the next stage?",
-        ).build()
+        brief = Brief(
+            problem_statement=artifact_text,
+            background=f"Gate brainstorm for stage '{stage_name}'.",
+            constraints=[],
+            goals=[f"Decide whether stage '{stage_name}' output should advance."],
+            open_questions=[],
+        )
 
         async def _execute() -> Any:
             await session.open()
             try:
-                result = await brainstorm(brief, outside, lead)
+                result = await brainstorm(brief, outside, lead, outside_meta=meta)
                 return result
             finally:
                 await provider.close()
@@ -301,7 +353,7 @@ class GateExecutor:
         from agentcouncil.decide import decide
         from agentcouncil.schemas import DecideInput, DecideOption
 
-        provider, session, outside, lead = self._create_session(self._backend)
+        provider, session, outside, lead, meta = self._create_session(self._backend)
 
         decide_input = DecideInput(
             decision=f"Should stage '{stage_name}' output advance to the next stage?",
@@ -316,7 +368,7 @@ class GateExecutor:
         async def _execute() -> Any:
             await session.open()
             try:
-                result = await decide(decide_input, outside, lead)
+                result = await decide(decide_input, outside, lead, outside_meta=meta)
                 return result
             finally:
                 await provider.close()
@@ -328,33 +380,3 @@ class GateExecutor:
 
         decision = self._normalizer.normalize("decide", raw_artifact, session_id)
         return decision, raw_artifact
-
-
-def make_gate_runner(
-    gate_executor: GateExecutor,
-    gate_type: str,
-    artifact_fn: Callable[[], str],
-    stage_name: str = "",
-) -> Callable[[], GateDecision]:
-    """Create a gate runner callable compatible with LinearOrchestrator.gate_runners.
-
-    The returned callable captures the gate_executor and produces a GateDecision
-    when called (no arguments).
-
-    Args:
-        gate_executor: GateExecutor instance.
-        gate_type: Protocol type (review_loop, challenge, etc.).
-        artifact_fn: Callable that returns the text to gate on (called lazily).
-        stage_name: Stage being gated (for context).
-
-    Returns:
-        A no-arg callable returning GateDecision.
-    """
-    def runner() -> GateDecision:
-        artifact_text = artifact_fn()
-        decision, _ = gate_executor.run_gate(
-            gate_type, artifact_text=artifact_text, stage_name=stage_name,
-        )
-        return decision
-
-    return runner

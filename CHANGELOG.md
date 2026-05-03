@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0 (2026-05-03)
+
+Feature release for configurable lead agents in MCP/library mode.
+
+### Features
+
+- **Configurable lead selection:** `brainstorm`, `review`, `decide`, `challenge`, `review_loop`, and `protocol_resume` now accept `lead_backend` and `lead_model`.
+- **Native Claude/Codex leads:** the lead may be `claude`, `codex`, or a named profile whose provider is `claude` or `codex`. Claude preserves the historical `opus` default; Codex uses the CLI default unless a model is configured.
+- **Independent outside backend selection:** `backend` continues to select the outside agent, and same-backend pairings are allowed with separate sessions.
+- **Lead config defaults:** `.agentcouncil.json` supports `default_lead_profile`; env defaults are available via `AGENTCOUNCIL_DEFAULT_LEAD_PROFILE` and legacy `AGENTCOUNCIL_LEAD_AGENT`.
+- **Autopilot gate lead wiring:** lower-level MCP autopilot tools persist `lead_backend`/`lead_model` and use them for real gate execution when `AGENTCOUNCIL_AUTOPILOT_GATES=1`.
+- **Native Codex plugin packaging:** Added `.codex-plugin/plugin.json`, `.mcp.json`, and host-neutral shared skills so AgentCouncil can run directly as a Codex plugin with Codex as the host lead.
+
+### Fixes
+
+- Explicit built-in backend names such as `backend="claude"` now override `default_profile` instead of being swallowed by the configured default.
+- Misspelled explicit backend/profile names now fail closed instead of silently falling through to defaults.
+- `scripts/start-server.sh` now supports both Claude Code and Codex plugin environment variables.
+- Real autopilot gate transcripts now record lead/outside backend, model, transport, workspace access, and independence tier metadata.
+- Real review, challenge, and review_loop autopilot gates now apply certification checks.
+- `review_loop` now escalates protocol `partial_failure` results instead of treating an empty failure artifact as a clean pass.
+- Autopilot brainstorm gates now construct a valid `Brief` directly instead of calling `BriefBuilder` with unsupported arguments.
+
+### Docs
+
+- `docs/BACKENDS.md` documents lead selection separately from outside backend selection.
+- `docs/ARCHITECTURE.md` documents configurable MCP/library leads and clarifies that Claude Code skill mode remains host-driven.
+- Autopilot docs now describe the opt-in real-gate path and stored lead/outside gate settings.
+
 ## 0.3.1 (2026-04-26)
 
 Patch release for the 0.3.0 autopilot workflow, focused on faster opt-in review gates and safer durable state.
