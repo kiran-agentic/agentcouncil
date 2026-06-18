@@ -12,7 +12,7 @@ def test_codex_plugin_manifest_points_to_shared_skills_and_mcp_config() -> None:
     manifest = json.loads(manifest_path.read_text())
 
     assert manifest["name"] == "agentcouncil"
-    assert manifest["version"] == "0.5.0"
+    assert manifest["version"] == "0.6.0"
     assert manifest["skills"] == "./skills/"
     assert manifest["mcpServers"] == "./.mcp.json"
     assert (ROOT / "skills").is_dir()

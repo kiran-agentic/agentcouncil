@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-06-18)
 
 Self-configuration skill and a more robust server bootstrap.
 
