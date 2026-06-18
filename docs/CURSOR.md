@@ -181,6 +181,7 @@ Run `cursor-agent --list-models` to see the model names your account supports. P
 
 | Symptom | Fix |
 |---------|-----|
+| `No module named 'rich'` / `'fastmcp'` on startup | The dependency install was incomplete (e.g. a slow first-launch install was interrupted by Cursor's MCP start timeout). `scripts/start-server.sh` self-heals: just reload the MCP server and it re-installs and verifies the deps. The **first launch** can take ~30–60s while it bootstraps; subsequent launches are instant. Installing [`uv`](https://docs.astral.sh/uv/) makes the bootstrap fast and reliable. If it persists, delete the bootstrap cache (`rm -rf <repo>/.venv-data`) and reload. |
 | `cursor-agent CLI not found on PATH` | Install the [Cursor CLI](https://cursor.com/docs/cli) and ensure `cursor-agent` is on PATH (restart Cursor so the MCP server inherits the updated PATH). |
 | Default backend is `claude`, not `cursor` | Confirm `.cursor/mcp.json` sets `"env": { "AGENTCOUNCIL_HOST": "cursor" }`, or set `AGENTCOUNCIL_DEFAULT_PROFILE` / `default_profile` explicitly. |
 | Auth / 401 errors from `cursor-agent` | Run `cursor-agent login` or set `CURSOR_API_KEY`. |
