@@ -85,8 +85,12 @@ skill:
 python scripts/generate-cursor-commands.py
 ```
 
-You now have `/brainstorm`, `/challenge`, `/decide`, `/review`, `/inspect`, and
-`/autopilot` in Cursor's chat.
+You now have `/configure`, `/brainstorm`, `/challenge`, `/decide`, `/review`,
+`/inspect`, and `/autopilot` in Cursor's chat.
+
+> **Tip:** run `/configure` first — it reads your current setup, detects which
+> backends are available, and writes `.agentcouncil.json` for you (e.g. to pick a
+> Cursor model, or add OpenRouter/Ollama). It never stores API keys in the file.
 
 ---
 
