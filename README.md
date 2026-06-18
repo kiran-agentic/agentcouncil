@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 [![Tests](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml/badge.svg)](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml)
 
-Newest in `0.6.0`: **a `/configure` self-setup skill and a self-healing server bootstrap**.
+Newest in `0.6.1`: **native Cursor plugin support** — install AgentCouncil directly from the repo URL in Cursor (`0.6.0` added the `/configure` skill and a self-healing server bootstrap).
 
 AgentCouncil now runs natively in **Cursor** — alongside Claude Code and Codex — via a Cursor MCP config and generated slash commands. The **default outside backend follows the host you run on** (Claude Code → Claude, Codex → Codex, Cursor → Cursor), so deliberations work out of the box on every host, and on Cursor you can point the outside agent at any **Cursor model** (e.g. `gpt-5` vs `sonnet-4.5`).
 
@@ -443,7 +443,7 @@ pytest -m real
 **Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. For skill-only changes, copying `skills/` is enough. For full workflow or server changes, sync the cached plugin copy:
 
 ```bash
-PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.6.0
+PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.6.1
 
 rsync -a --delete agentcouncil/ "$PLUGIN/agentcouncil/"
 rsync -a --delete skills/ "$PLUGIN/skills/"

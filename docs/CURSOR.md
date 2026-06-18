@@ -36,8 +36,24 @@ Everything is delivered through two Cursor-native mechanisms: an **MCP server**
 
 ## Install
 
-AgentCouncil ships a ready-to-use `.cursor/` directory in this repository. Use it
-directly (when working inside the AgentCouncil repo) or copy it into your own
+### Option A — install as a Cursor plugin (easiest)
+
+In Cursor, add AgentCouncil from its **repository URL** (the plugin install flow /
+Settings → Plugins), pointing at `https://github.com/kiran-agentic/agentcouncil`.
+Cursor reads the `.cursor-plugin/plugin.json` manifest, registers the MCP server
+(with `AGENTCOUNCIL_HOST=cursor`), and discovers the skills. The **first launch
+bootstraps the Python server (~30–60s)**; after that it's instant. Requires
+Python 3.12+ (and ideally [`uv`](https://docs.astral.sh/uv/)) on your PATH.
+
+> If you previously got `No module named 'rich.traceback'`, you were on an older
+> build that lacked the Cursor manifest (Cursor fell back to the Claude manifest,
+> whose `${CLAUDE_PLUGIN_ROOT}` path Cursor doesn't resolve). Reinstall the plugin
+> on 0.6.1+.
+
+### Option B — manual MCP config
+
+AgentCouncil also ships a ready-to-use `.cursor/` directory in this repository. Use
+it directly (when working inside the AgentCouncil repo) or copy it into your own
 project.
 
 ### 1. Register the MCP server

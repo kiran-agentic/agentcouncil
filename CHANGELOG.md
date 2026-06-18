@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 (2026-06-18)
+
+Native Cursor plugin support.
+
+### Fixes
+
+- **Installable as a Cursor plugin (fixes `No module named 'rich.traceback'` on Cursor plugin install).** Added a `.cursor-plugin/plugin.json` manifest so Cursor's "install from repo URL" launches the MCP server correctly. Previously Cursor had no native manifest and fell back to `.claude-plugin/plugin.json`, whose command uses `${CLAUDE_PLUGIN_ROOT}` — a variable Cursor does not set — so the server launched from a broken path and crashed on startup. The Cursor manifest uses a relative command (resolved from the plugin root) and sets `AGENTCOUNCIL_HOST=cursor`. `scripts/start-server.sh` now also honors `CURSOR_PLUGIN_ROOT` when present and anchors on its own location otherwise. Verified end-to-end: the server boots over MCP via a relative command with no `CLAUDE_PLUGIN_ROOT`.
+
 ## 0.6.0 (2026-06-18)
 
 Self-configuration skill and a more robust server bootstrap.

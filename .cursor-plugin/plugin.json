@@ -1,0 +1,30 @@
+{
+  "name": "agentcouncil",
+  "version": "0.6.1",
+  "description": "Multi-agent deliberation protocols for Cursor: brainstorm, review, decide, challenge, inspect, configure, and autopilot with independent agents.",
+  "author": {
+    "name": "Kiran Krishna"
+  },
+  "homepage": "https://github.com/kiran-agentic/agentcouncil",
+  "repository": "https://github.com/kiran-agentic/agentcouncil",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agents",
+    "cursor",
+    "code-review",
+    "deliberation",
+    "mcp",
+    "multi-agent"
+  ],
+  "skills": "./skills/",
+  "commands": "./.cursor/commands/",
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "./scripts/start-server.sh",
+      "args": [],
+      "env": {
+        "AGENTCOUNCIL_HOST": "cursor"
+      }
+    }
+  }
+}
