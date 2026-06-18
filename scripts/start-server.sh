@@ -7,9 +7,13 @@
 
 set -e
 
+# Resolve the repo root from this script's own location ($0), so the launcher works
+# regardless of any host-specific plugin-root variable. Cursor launches plugin MCP
+# commands with a relative path from the plugin root and sets no CLAUDE_PLUGIN_ROOT,
+# so SCRIPT_ROOT is the reliable anchor; the *_PLUGIN_ROOT vars are honored when present.
 SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PLUGIN_ROOT="${AGENTCOUNCIL_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_ROOT}}}"
-DATA_DIR="${AGENTCOUNCIL_PLUGIN_DATA:-${CODEX_PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}}}"
+PLUGIN_ROOT="${AGENTCOUNCIL_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_ROOT}}}}"
+DATA_DIR="${AGENTCOUNCIL_PLUGIN_DATA:-${CURSOR_PLUGIN_DATA:-${CODEX_PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}}}}"
 
 # Modules the server cannot start without. fastmcp pulls in rich (rich.traceback),
 # pydantic, etc. — importing these is the real proof the env is usable.
