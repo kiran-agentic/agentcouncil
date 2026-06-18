@@ -1,6 +1,8 @@
 # Backends
 
-AgentCouncil supports multiple AI backends as the outside agent. The active host agent, Claude Code or Codex, orchestrates the deliberation; the outside agent is a separate LLM session. This page explains how to select backends, configure profiles, and understand capability differences.
+AgentCouncil supports multiple AI backends as the outside agent. The active host agent — Claude Code, Codex, or Cursor — orchestrates the deliberation; the outside agent is a separate LLM session. This page explains how to select backends, configure profiles, and understand capability differences.
+
+> **Host-aware default:** when nothing is configured, the default backend is **the host AgentCouncil runs under** — Claude Code → `claude`, Codex → `codex`, Cursor → `cursor`. See [Host-Aware Default](#host-aware-default) and, for Cursor specifically, [CURSOR.md](CURSOR.md).
 
 ## Selecting a Backend
 
@@ -55,7 +57,7 @@ export AGENTCOUNCIL_LEAD_AGENT=codex
 
 `AGENTCOUNCIL_DEFAULT_PROFILE` selects a named profile from your config file. `AGENTCOUNCIL_OUTSIDE_AGENT` is the legacy env var — it selects a backend by string name (e.g., `codex`, `claude`) without profile config. Both are supported; the named profile takes precedence when no explicit backend/profile is passed.
 
-Lead selection is separate from outside-agent selection. The MCP/library protocol tools accept `lead_backend=` and `lead_model=` for the lead-side CLI adapter. `lead_backend` may be `claude`, `codex`, or a named profile whose provider is `claude` or `codex`; other providers remain outside-agent only.
+Lead selection is separate from outside-agent selection. The MCP/library protocol tools accept `lead_backend=` and `lead_model=` for the lead-side CLI adapter. `lead_backend` may be `claude`, `codex`, `cursor`, or a named profile whose provider is one of those; other providers remain outside-agent only. (In normal skill mode the lead is simply the host agent running the skill, so a lead adapter is only built in library/MCP mode.)
 
 ### Precedence
 
@@ -67,9 +69,16 @@ Lead selection is separate from outside-agent selection. The MCP/library protoco
 | 4 | project config | `.agentcouncil.json` in current directory |
 | 5 | global config | `~/.agentcouncil.json` |
 | 6 | legacy env var | `AGENTCOUNCIL_OUTSIDE_AGENT=claude` |
-| 7 (default) | built-in default | `"claude"` |
+| 7 | host default | the backend it runs on (`claude` / `codex` / `cursor`) |
+| 8 (default) | built-in default | `"claude"` (when no host is identified) |
 
 Explicit built-in backend names intentionally bypass `default_profile`. For example, if `.agentcouncil.json` sets `default_profile="codex-outside"`, a tool call with `backend="claude"` still uses Claude.
+
+### Host-Aware Default
+
+When no backend is selected by any of levels 1–6, AgentCouncil defaults to **the host platform it is running under** — Claude Code → `claude`, Codex → `codex`, Cursor → `cursor`. This makes a zero-config deliberation use "the backend it runs on" (a fresh, independent session of the host model), so AgentCouncil works out of the box on every host without requiring a separate CLI.
+
+The host is detected from `AGENTCOUNCIL_HOST` (set explicitly by each platform's MCP launch config — e.g. `.cursor/mcp.json` sets it to `cursor`), falling back to the `CODEX_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` markers the Codex and Claude Code plugin runtimes already inject, and finally to `claude`. Because the host default sits *below* explicit config (levels 1–6), any `backend=`, env var, or `default_profile` you set still wins.
 
 Lead precedence is similar but intentionally ignores outside defaults:
 
@@ -80,7 +89,8 @@ Lead precedence is similar but intentionally ignores outside defaults:
 | 3 | project config | `default_lead_profile` in `.agentcouncil.json` |
 | 4 | global config | `default_lead_profile` in `~/.agentcouncil.json` |
 | 5 | legacy env var | `AGENTCOUNCIL_LEAD_AGENT=codex` |
-| 6 (default) | built-in default | `"claude"` with model `"opus"` |
+| 6 | host default | the backend it runs on (`claude` / `codex` / `cursor`) |
+| 7 (default) | built-in default | `"claude"` with model `"opus"` (when no host is identified) |
 
 ## Available Backends
 
@@ -88,6 +98,7 @@ Lead precedence is similar but intentionally ignores outside defaults:
 |---------|---------|------------------|----------------|
 | claude (default) | Claude CLI on PATH; already available in Claude Code | none | `ClaudeProvider` |
 | **codex** | `codex` CLI on PATH | none | `CodexProvider` |
+| **cursor** | `cursor-agent` CLI ([cursor.com/docs/cli](https://cursor.com/docs/cli)) | none (`cursor-agent login` or `CURSOR_API_KEY`) | `CursorProvider` |
 | **ollama** | `pip install "agentcouncil[ollama]"` | none (local) | `OllamaProvider` |
 | **openrouter** | `pip install "agentcouncil[openrouter]"` | `OPENROUTER_API_KEY` | `OpenRouterProvider` |
 | **bedrock** | `pip install "agentcouncil[bedrock]"` | AWS credentials (boto3 chain) | `BedrockProvider` |
@@ -292,6 +303,37 @@ npm install -g @openai/codex
 /brainstorm backend=codex What are the tradeoffs of microservices vs monolith?
 ```
 
+---
+
+### Cursor (CLI)
+
+Cursor runs the outside agent via the `cursor-agent` CLI in headless print mode (`--print --output-format json`). It uses a stateless **replay** session strategy — the full conversation is re-sent each turn — so context is preserved without relying on `cursor-agent`'s `--resume` (which was not verified against a live binary during development). Cursor is also the **zero-config default backend when the host is Cursor** — see [CURSOR.md](CURSOR.md) for the full host setup (MCP config + slash commands).
+
+**Install:**
+```bash
+# install the Cursor CLI — https://cursor.com/docs/cli
+cursor-agent login          # or export CURSOR_API_KEY=...
+cursor-agent --list-models  # see which models you can pass as `model`
+```
+
+**Required env vars:** None when authenticated via `cursor-agent login`; otherwise `CURSOR_API_KEY`.
+
+**Profile config** — name a profile per model so deliberations can pit one Cursor model against another:
+```json
+{
+  "profiles": {
+    "cursor-gpt5":   { "provider": "cursor", "model": "gpt-5" },
+    "cursor-sonnet": { "provider": "cursor", "model": "sonnet-4.5" }
+  }
+}
+```
+
+**Quick test:**
+```
+/brainstorm backend=cursor-gpt5 What are the tradeoffs of microservices vs monolith?
+```
+On a Cursor host, plain `/brainstorm …` already uses Cursor (the host default) with the CLI's default model.
+
 ## Independence Tiers
 
 AgentCouncil's core principle is **independence before convergence**. The value of that independence varies by which backend you choose.
@@ -314,6 +356,7 @@ Same model family, potentially correlated biases — but protocol independence i
 
 - `claude` subprocess + Claude Code host
 - `codex` subprocess + Codex host
+- `cursor` (a fresh `cursor-agent` session) + Cursor host — the zero-config default on Cursor
 - `ollama` with a model derived from the same family as the host
 
 **Recommended for:** lower-stakes work, speed-sensitive tasks, fully local environments.
@@ -340,6 +383,7 @@ Workspace access determines whether the outside agent can read project files dur
 | **codex** | Native | Persistent MCP session — reads files directly | Local process, own permissions |
 | **kiro** | Native | Persistent ACP session — manages own tools | Local process, own permissions |
 | **claude** | Native | Persistent session via `--session-id` — own workspace tools | Local process, own permissions |
+| **cursor** | Native | `cursor-agent` reads files itself (stateless replay each turn) | Local process, own permissions |
 | **ollama / openrouter / bedrock** | Assisted | Read-only tool harness: `list_files`, `search_repo`, `read_file`, `read_diff` | Restricted by AgentCouncil |
 
 **Native backends** run as local processes with their own tool permissions. They can read and write files using their built-in tools. AgentCouncil does not restrict their capabilities.
@@ -361,6 +405,7 @@ Session strategy determines how conversation history is managed between the sess
 |---------|----------|----------|
 | **codex** | Persistent | Provider maintains conversation state internally; only the latest message is sent each turn |
 | **claude** | Persistent | Provider maintains conversation state via `--session-id`; only the latest message is sent each turn |
+| **cursor** | Replay | Provider is stateless; full accumulated history is re-sent each turn (does not rely on `--resume`) |
 | **kiro** | Persistent | Provider maintains conversation state via ACP; only the latest message is sent each turn |
 | **ollama** | Replay | Provider is stateless; full accumulated history is sent every turn |
 | **openrouter** | Replay | Provider is stateless; full accumulated history is sent every turn |
@@ -415,6 +460,6 @@ Certification happens automatically on first use of a gated protocol — no manu
 
 ## Auto-Fallback
 
-When no backend is configured anywhere (no profile, no env var, no `default_profile` in config), AgentCouncil defaults to ClaudeProvider. This means deliberations work out of the box inside Claude Code with zero configuration.
+When no backend is configured anywhere (no profile, no env var, no `default_profile` in config), AgentCouncil defaults to **the host it runs under** — Claude Code → Claude, Codex → Codex, Cursor → Cursor — and to ClaudeProvider when no host can be identified. This means deliberations work out of the box on every supported host with zero configuration. See [Host-Aware Default](#host-aware-default).
 
 **Explicit backend with missing binary:** If you request a specific backend (e.g., `backend=codex`) but the binary is not on PATH, AgentCouncil raises an error with installation instructions rather than silently falling back to another backend. This prevents accidental use of a different model family than intended.

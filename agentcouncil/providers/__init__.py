@@ -12,6 +12,7 @@ Re-exports:
     BedrockProvider    — AWS Bedrock provider via boto3 (requires boto3)
     KiroProvider       — Kiro CLI ACP subprocess provider (requires kiro-cli)
     CodexProvider      — Codex MCP server provider (requires fastmcp + codex CLI)
+    CursorProvider     — Cursor CLI subprocess provider (requires cursor-agent CLI)
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from .base import (
 )
 
 from .claude import ClaudeProvider
+from .cursor import CursorProvider
 
 # Optional providers — available only when their SDK extras are installed.
 # __all__ is built dynamically so it only advertises what's actually importable.
@@ -67,5 +69,6 @@ __all__ = [
     "ProviderError",
     "StubProvider",
     "ClaudeProvider",
+    "CursorProvider",
     *_optional_providers,
 ]

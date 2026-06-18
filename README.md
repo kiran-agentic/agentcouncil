@@ -7,19 +7,27 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 [![Tests](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml/badge.svg)](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml)
 
-Newest in `0.4.0`: **configurable lead agents and native Codex plugin packaging**.
+Newest in `0.5.0`: **Cursor host support and a host-aware default backend**.
 
-AgentCouncil now lets MCP/library protocol callers choose **Claude or Codex as the lead agent** while keeping the outside reviewer, challenger, or deliberation partner independently configurable. It also ships Codex plugin metadata so the same council workflows can run natively with Codex as the host agent.
+AgentCouncil now runs natively in **Cursor** — alongside Claude Code and Codex — via a Cursor MCP config and generated slash commands. The **default outside backend follows the host you run on** (Claude Code → Claude, Codex → Codex, Cursor → Cursor), so deliberations work out of the box on every host, and on Cursor you can point the outside agent at any **Cursor model** (e.g. `gpt-5` vs `sonnet-4.5`).
 
-Underneath that headline feature, AgentCouncil still provides its core multi-agent protocols: `/brainstorm`, `/review`, `/decide`, `/challenge`, and `/inspect`. The host agent, Claude Code or Codex, works with an outside agent that stays independent by role, backend, and session. The outside agent defaults to a fresh Claude session, or you can configure Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity.
+Underneath that headline feature, AgentCouncil still provides its core multi-agent protocols: `/brainstorm`, `/review`, `/decide`, `/challenge`, and `/inspect`. The host agent — Claude Code, Codex, or Cursor — works with an outside agent that stays independent by role, backend, and session. The outside agent defaults to **the host you run on** (Claude Code → Claude, Codex → Codex, Cursor → Cursor), or you can configure Cursor models, Codex, Ollama, OpenRouter, Bedrock, or Kiro for cross-model diversity. See [CURSOR.md](docs/CURSOR.md) for running on Cursor.
 
 </div>
 
 ---
 
-## What's New In 0.4.0
+## What's New In 0.5.0
 
-This release makes lead-agent selection first-class in MCP/library mode:
+This release brings AgentCouncil to **Cursor** and makes the default backend host-aware:
+
+- **Runs natively in Cursor:** ships `.cursor/mcp.json` and generated `.cursor/commands/*.md` slash commands (one per skill), so `/brainstorm`, `/review`, `/decide`, `/challenge`, `/inspect`, and `/autopilot` work inside Cursor. See [CURSOR.md](docs/CURSOR.md).
+- **Host-aware default backend:** the default outside agent (and library-mode lead) is now *the backend it runs on* — Claude Code → `claude`, Codex → `codex`, Cursor → `cursor` — falling back to `claude` when no host is identified. Explicit `backend=`, env vars, and `default_profile` still win. (Behavior change for Codex hosts — see [CHANGELOG.md](CHANGELOG.md).)
+- **Cursor model selection:** a new `cursor` backend runs the `cursor-agent` CLI; name profiles like `cursor-gpt5` / `cursor-sonnet` to use different Cursor models per deliberation, independent of the editor's model.
+
+### Previously in 0.4.0
+
+Lead-agent selection became first-class in MCP/library mode:
 
 - **Configurable lead agent:** `brainstorm`, `review`, `decide`, `challenge`, `review_loop`, and `protocol_resume` accept `lead_backend=` and `lead_model=`.
 - **Native lead adapters:** `lead_backend` may be `claude`, `codex`, or a named profile backed by one of those native CLI providers. Claude still defaults to `opus`; Codex uses the Codex CLI default unless configured.
@@ -51,7 +59,7 @@ The `0.3.x` series added the current **`/autopilot`** workflow foundation:
 
 ## Core Skills
 
-Claude Code or Codex orchestrates these skills as the host agent. The outside agent is a separate LLM session.
+Claude Code, Codex, or Cursor orchestrates these skills as the host agent. The outside agent is a separate LLM session.
 
 | You're asking... | Command | What happens |
 |:---|:---|:---|
@@ -138,10 +146,10 @@ Tier only promotes (never demotes). Sensitive file detection during execution ca
 
 ### Prerequisites
 
-1. Claude Code or Codex — the host environment
+1. Claude Code, Codex, or Cursor — the host environment
 2. macOS or Linux (Windows support planned for a future release)
 
-That's all you need. Claude is the default outside agent backend. In Codex, install and authenticate the `claude` CLI or configure a different default backend such as `codex`.
+That's all you need. **The default outside agent backend is the host you run on** — Claude Code → Claude, Codex → Codex, Cursor → Cursor — so deliberations work out of the box on every host with zero configuration. Set `backend=` (or a `default_profile`) to point the outside agent at a different model family for more cognitive diversity. Running on Cursor? See [CURSOR.md](docs/CURSOR.md).
 
 <details>
 <summary><strong>Optional: additional backends</strong></summary>
@@ -157,7 +165,7 @@ pip install "agentcouncil[ollama]"
 ollama pull llama3.1:8b
 ```
 
-See [BACKENDS.md](docs/BACKENDS.md) for all supported backends including OpenRouter, Bedrock, and Kiro.
+See [BACKENDS.md](docs/BACKENDS.md) for all supported backends including Cursor, OpenRouter, Bedrock, and Kiro, and [CURSOR.md](docs/CURSOR.md) for running on Cursor.
 
 </details>
 
@@ -428,7 +436,7 @@ pytest -m real
 **Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. For skill-only changes, copying `skills/` is enough. For full workflow or server changes, sync the cached plugin copy:
 
 ```bash
-PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.4.0
+PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.5.0
 
 rsync -a --delete agentcouncil/ "$PLUGIN/agentcouncil/"
 rsync -a --delete skills/ "$PLUGIN/skills/"
