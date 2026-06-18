@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 [![Tests](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml/badge.svg)](https://github.com/kiran-agentic/agentcouncil/actions/workflows/tests.yml)
 
-Newest in `0.5.0`: **Cursor host support and a host-aware default backend**.
+Newest in `0.6.0`: **a `/configure` self-setup skill and a self-healing server bootstrap**.
 
 AgentCouncil now runs natively in **Cursor** — alongside Claude Code and Codex — via a Cursor MCP config and generated slash commands. The **default outside backend follows the host you run on** (Claude Code → Claude, Codex → Codex, Cursor → Cursor), so deliberations work out of the box on every host, and on Cursor you can point the outside agent at any **Cursor model** (e.g. `gpt-5` vs `sonnet-4.5`).
 
@@ -17,7 +17,14 @@ Underneath that headline feature, AgentCouncil still provides its core multi-age
 
 ---
 
-## What's New In 0.5.0
+## What's New In 0.6.0
+
+This release adds a self-configuration skill and hardens the server bootstrap:
+
+- **`/configure` skill:** set up AgentCouncil from inside the agent — it reads your current config, detects which backends are available, and writes a valid `.agentcouncil.json` (profiles + default outside/lead backend) for Cursor models, Codex, Claude, Ollama, OpenRouter, or Bedrock. API keys are never written to the file (`api_key_env` holds the env var *name*).
+- **Self-healing bootstrap:** `scripts/start-server.sh` now verifies and repairs a partial/corrupt dependency install instead of crashing the MCP server with `No module named 'rich'` — fixing intermittent startup failures (notably the first launch inside Cursor).
+
+### Previously in 0.5.0
 
 This release brings AgentCouncil to **Cursor** and makes the default backend host-aware:
 
@@ -436,7 +443,7 @@ pytest -m real
 **Note for plugin developers:** If you installed AgentCouncil via the plugin marketplace and are also editing the source, the plugin cache won't auto-sync with your changes. For skill-only changes, copying `skills/` is enough. For full workflow or server changes, sync the cached plugin copy:
 
 ```bash
-PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.5.0
+PLUGIN=~/.claude/plugins/cache/agentcouncil/agentcouncil/0.6.0
 
 rsync -a --delete agentcouncil/ "$PLUGIN/agentcouncil/"
 rsync -a --delete skills/ "$PLUGIN/skills/"

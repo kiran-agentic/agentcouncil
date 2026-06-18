@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 (2026-06-18)
+
+Self-configuration skill and a more robust server bootstrap.
+
+### Features
+
+- **`/configure` skill:** a new skill that sets up AgentCouncil's backends — it reads the current config (`show-effective-config`), detects which backends are available, and writes a valid `.agentcouncil.json` (profiles, default outside/lead backend, Cursor/Codex/Claude/Ollama/OpenRouter/Bedrock). API keys are never written to the file — `api_key_env` stores the env var *name*, enforced by the config validator. Available as `/configure` in Claude Code, Codex, and (via the generated command) Cursor.
+
+### Fixes
+
+- **Server bootstrap self-heals a partial/corrupt install.** `scripts/start-server.sh` previously trusted a venv that existed but was missing dependencies (e.g. a cold first install interrupted by an MCP host's startup timeout, a stale `.venv`, or `uv` absent from a minimal PATH), causing the server to crash with `No module named 'rich.traceback'`. It now decides whether to (re)install by actually importing `fastmcp`/`rich`/`pydantic`, repairs the env automatically (uv path verifies + `uv sync`/`--reinstall`; pip path verifies + reinstalls), discovers `uv` outside PATH, keeps pip/uv output off the MCP stdio stream, and emits a clear actionable error instead of a cryptic `ImportError`.
+
 ## 0.5.0 (2026-06-18)
 
 Cursor host support and a host-aware default backend.
