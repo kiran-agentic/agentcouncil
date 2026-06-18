@@ -221,7 +221,7 @@ class ProfileLoader:
         if profile_name is not None:
             raise ValueError(
                 f"Unknown backend/profile: {profile_name!r}. "
-                "Expected a named profile, 'claude', or 'codex'."
+                "Expected a named profile, 'claude', 'codex', or 'cursor'."
             )
 
         # Level 3: default_profile from config (project > global > env > pydantic default)
@@ -244,7 +244,7 @@ class ProfileLoader:
             3. AGENTCOUNCIL_LEAD_AGENT
             4. built-in default "claude"
         """
-        valid_leads = {"codex", "claude"}
+        valid_leads = {"codex", "claude", "cursor"}
 
         if profile_name is not None:
             if profile_name in self._config.profiles:
@@ -253,7 +253,7 @@ class ProfileLoader:
                 return profile_name
             raise ValueError(
                 f"Unknown lead backend/profile: {profile_name!r}. "
-                "Expected 'claude', 'codex', or a named profile."
+                "Expected 'claude', 'codex', 'cursor', or a named profile."
             )
 
         if self._config.default_lead_profile is not None:
@@ -264,7 +264,7 @@ class ProfileLoader:
                 return default_lead
             raise ValueError(
                 f"Unknown default_lead_profile: {default_lead!r}. "
-                "Expected 'claude', 'codex', or a named profile."
+                "Expected 'claude', 'codex', 'cursor', or a named profile."
             )
 
         legacy_lead = os.environ.get("AGENTCOUNCIL_LEAD_AGENT")
@@ -273,10 +273,15 @@ class ProfileLoader:
                 return legacy_lead
             raise ValueError(
                 f"Unknown AGENTCOUNCIL_LEAD_AGENT: {legacy_lead!r}. "
-                "Expected 'claude' or 'codex'."
+                "Expected 'claude', 'codex', or 'cursor'."
             )
 
-        return "claude"
+        # Default the lead to the host AgentCouncil is running under, so the
+        # "backend it runs on" governs library-mode deliberations too. Falls
+        # back to "claude" when no host is identified (historical default).
+        from agentcouncil.host import default_backend_for_host
+
+        return default_backend_for_host()
 
     def effective_report(self) -> dict[str, dict[str, Any]]:
         """Return per-field source attribution for every config field.

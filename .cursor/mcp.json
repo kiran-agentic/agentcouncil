@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agentcouncil": {
+      "command": "./scripts/start-server.sh",
+      "args": [],
+      "env": {
+        "AGENTCOUNCIL_HOST": "cursor"
+      }
+    }
+  }
+}

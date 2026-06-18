@@ -10,7 +10,7 @@ import warnings
 from typing import Any
 
 __all__ = [
-    "AgentAdapter", "AdapterError", "CodexAdapter", "ClaudeAdapter",
+    "AgentAdapter", "AdapterError", "CodexAdapter", "ClaudeAdapter", "CursorAdapter",
     "StubAdapter", "CodexSession", "CodexSessionAdapter",
     "VALID_BACKENDS", "VALID_LEAD_BACKENDS",
     "resolve_outside_backend", "resolve_outside_adapter",
@@ -36,9 +36,9 @@ class AgentAdapter(abc.ABC):
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Emit DeprecationWarning for subclasses defined outside this module.
 
-        Internal subclasses (CodexAdapter, ClaudeAdapter, StubAdapter,
-        CodexSessionAdapter) are defined in agentcouncil.adapters and are
-        exempted. External subclasses (e.g. OutsideSessionAdapter in
+        Internal subclasses (CodexAdapter, ClaudeAdapter, CursorAdapter,
+        StubAdapter, CodexSessionAdapter) are defined in agentcouncil.adapters and
+        are exempted. External subclasses (e.g. OutsideSessionAdapter in
         agentcouncil.session, or user-defined adapters) trigger the warning.
         """
         super().__init_subclass__(**kwargs)
@@ -170,6 +170,59 @@ class ClaudeAdapter(AgentAdapter):
             raise AdapterError(f"claude -p timed out after {self._timeout}s") from e
 
 
+class CursorAdapter(AgentAdapter):
+    """Invokes the local `cursor-agent` CLI as a one-shot subprocess (lead side).
+
+    Used as the lead adapter in library mode when the host is Cursor. The prompt is
+    passed as the trailing positional argument and the plain-text response is read
+    from stdout (``--output-format text``).
+    """
+
+    def __init__(self, model: str | None = None, timeout: int = 900, cwd: str | None = None) -> None:
+        if not shutil.which("cursor-agent"):
+            raise EnvironmentError("cursor-agent CLI not found on PATH")
+        self._model = model
+        self._timeout = timeout
+        self._cwd = cwd
+
+    def call(self, prompt: str) -> str:
+        cmd = [
+            "cursor-agent",
+            "--print",
+            "--output-format",
+            "text",
+        ]
+        if self._model:
+            cmd.extend(["--model", self._model])
+        cmd.append(prompt)
+        # Resolve cwd at call time — picks up the server's resolved workspace
+        # even if the adapter was constructed before workspace resolution.
+        effective_cwd = self._cwd
+        if effective_cwd is None:
+            try:
+                from agentcouncil.server import _get_workspace_sync
+                effective_cwd = _get_workspace_sync()
+            except Exception:
+                effective_cwd = None
+        try:
+            result = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                check=True,
+                cwd=effective_cwd,
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            raise AdapterError(
+                f"cursor-agent failed (exit {e.returncode}): {e.stderr}"
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise AdapterError(f"cursor-agent timed out after {self._timeout}s") from e
+
+
 class StubAdapter(AgentAdapter):
     """Returns pre-configured canned responses for use in deterministic tests."""
 
@@ -191,22 +244,31 @@ class StubAdapter(AgentAdapter):
         return self._responses.pop(0)
 
 
-VALID_BACKENDS = ("codex", "claude")
+VALID_BACKENDS = ("codex", "claude", "cursor")
 VALID_LEAD_BACKENDS = VALID_BACKENDS
 
 
 def resolve_outside_backend(backend: str | None = None) -> str:
-    """Resolve outside agent backend from arg > env var > default.
+    """Resolve outside agent backend from arg > env var > host default.
 
     Precedence:
         1. Explicit ``backend`` argument (per-invocation)
         2. ``AGENTCOUNCIL_OUTSIDE_AGENT`` environment variable (global default)
-        3. ``"claude"`` (default — works out of the box inside Claude Code)
+        3. The host platform AgentCouncil is running under — "the backend it runs
+           on" (Claude Code → ``"claude"``, Codex → ``"codex"``, Cursor →
+           ``"cursor"``). Falls back to ``"claude"`` when no host is identified, so
+           behaviour is unchanged out of the box inside Claude Code.
 
     Raises:
         ValueError: if the resolved backend is not in VALID_BACKENDS.
     """
-    resolved = backend if backend else os.environ.get("AGENTCOUNCIL_OUTSIDE_AGENT", "claude")
+    from agentcouncil.host import default_backend_for_host
+
+    resolved = (
+        backend
+        or os.environ.get("AGENTCOUNCIL_OUTSIDE_AGENT")
+        or default_backend_for_host()
+    )
     if resolved not in VALID_BACKENDS:
         raise ValueError(
             f"Unknown outside agent backend: {resolved!r}. "
@@ -230,6 +292,8 @@ def resolve_outside_adapter(
         return CodexAdapter(model=model, timeout=timeout)
     elif resolved == "claude":
         return ClaudeAdapter(model=model, timeout=timeout)
+    elif resolved == "cursor":
+        return CursorAdapter(model=model, timeout=timeout)
     else:
         raise ValueError(f"Unknown outside agent backend: {resolved}")
 
@@ -289,9 +353,9 @@ def resolve_lead_adapter(
 ) -> AgentAdapter:
     """Create an adapter for the lead agent.
 
-    Supported lead providers are Claude and Codex. Claude preserves the historical
-    default model of "opus"; Codex uses its CLI default unless a model is supplied
-    directly or by a named profile.
+    Supported lead providers are Claude, Codex and Cursor. Claude preserves the
+    historical default model of "opus"; Codex and Cursor use their CLI default
+    unless a model is supplied directly or by a named profile.
     """
     provider_name, effective_model = resolve_lead_settings(
         backend=backend,
@@ -303,6 +367,8 @@ def resolve_lead_adapter(
         return ClaudeAdapter(model=effective_model, timeout=timeout, cwd=cwd)
     if provider_name == "codex":
         return CodexAdapter(model=effective_model, timeout=timeout, cwd=cwd)
+    if provider_name == "cursor":
+        return CursorAdapter(model=effective_model, timeout=timeout, cwd=cwd)
     raise ValueError(f"Unknown lead backend: {provider_name}")
 
 

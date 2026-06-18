@@ -25,8 +25,24 @@ from agentcouncil.schemas import TranscriptMeta
 
 
 def test_backend_default_is_claude(monkeypatch):
-    """UFALL-01: Default backend is claude when no arg or env var."""
-    monkeypatch.delenv("AGENTCOUNCIL_OUTSIDE_AGENT", raising=False)
+    """UFALL-01: Default backend is claude when no arg, env var, or host markers.
+
+    The default is now host-aware (resolve_outside_backend falls back to the host
+    AgentCouncil runs under), so clear the host markers to assert the bare default.
+    """
+    for var in (
+        "AGENTCOUNCIL_OUTSIDE_AGENT",
+        "AGENTCOUNCIL_HOST",
+        "CODEX_PLUGIN_ROOT",
+        "CODEX_HOME",
+        "CODEX_SANDBOX",
+        "CODEX_PLUGIN_DATA",
+        "CLAUDE_PLUGIN_ROOT",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_PLUGIN_DATA",
+    ):
+        monkeypatch.delenv(var, raising=False)
     assert resolve_outside_backend() == "claude"
 
 

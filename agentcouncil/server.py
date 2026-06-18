@@ -25,6 +25,7 @@ log = logging.getLogger("agentcouncil.server")
 from agentcouncil.adapters import (
     ClaudeAdapter,
     CodexAdapter,
+    CursorAdapter,
     resolve_lead_settings,
     resolve_outside_adapter, resolve_outside_backend,
 )
@@ -72,7 +73,7 @@ __all__ = ["mcp", "_SESSIONS", "_make_provider"]
 
 # Module-level FastMCP instance — exported for in-process test import.
 # No adapters instantiated here (pitfall 3: EnvironmentError at import time).
-mcp = FastMCP("agentcouncil", version="0.4.0")
+mcp = FastMCP("agentcouncil", version="0.5.0")
 
 # ---------------------------------------------------------------------------
 # Session registry — maps session_id (UUID str) -> OutsideSession
@@ -372,7 +373,7 @@ def _make_provider(
 
     Returns:
         An OutsideProvider instance ready for use with OutsideRuntime.
-        Recognised providers: ollama, openrouter, bedrock, kiro, codex, claude.
+        Recognised providers: ollama, openrouter, bedrock, kiro, codex, claude, cursor.
 
     Raises:
         ValueError: if the resolved result is an unrecognised legacy backend string.
@@ -403,8 +404,18 @@ def _make_provider(
                 )
             from agentcouncil.providers.claude import ClaudeProvider
             return ClaudeProvider(model=model, timeout=timeout or 900, cwd=workspace or _get_workspace_sync())
+        elif resolved == "cursor":
+            if shutil.which("cursor-agent") is None:
+                raise ProviderError(
+                    "cursor-agent CLI not found on PATH. "
+                    "Install the Cursor CLI from https://cursor.com/docs/cli "
+                    "(then `cursor-agent login`) — "
+                    "or configure a different backend in .agentcouncil.json."
+                )
+            from agentcouncil.providers.cursor import CursorProvider
+            return CursorProvider(model=model, timeout=timeout or 900, cwd=workspace or _get_workspace_sync())
         raise ValueError(
-            f"Session API requires a named profile with provider=ollama/openrouter/bedrock/codex/claude. "
+            f"Session API requires a named profile with provider=ollama/openrouter/bedrock/codex/claude/cursor. "
             f"Got legacy backend: {resolved!r}"
         )
 
@@ -459,6 +470,20 @@ def _make_provider(
             timeout=timeout or 900,
             cwd=workspace or _get_workspace_sync(),
         )
+    elif bp.provider == "cursor":
+        if shutil.which("cursor-agent") is None:
+            raise ProviderError(
+                "cursor-agent CLI not found on PATH. "
+                "Install the Cursor CLI from https://cursor.com/docs/cli "
+                "(then `cursor-agent login`) — "
+                "or configure a different backend in .agentcouncil.json."
+            )
+        from agentcouncil.providers.cursor import CursorProvider
+        return CursorProvider(
+            model=model or bp.model,
+            timeout=timeout or 900,
+            cwd=workspace or _get_workspace_sync(),
+        )
     else:
         raise ProviderError(f"Unknown provider: {bp.provider!r}")
 
@@ -492,6 +517,8 @@ def _make_lead_adapter(
         return ClaudeAdapter(model=effective_model, timeout=timeout), provider_name, effective_model
     if provider_name == "codex":
         return CodexAdapter(model=effective_model, timeout=timeout), provider_name, effective_model
+    if provider_name == "cursor":
+        return CursorAdapter(model=effective_model, timeout=timeout), provider_name, effective_model
     raise ValueError(f"Unknown lead backend: {provider_name!r}")
 
 

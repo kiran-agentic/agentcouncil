@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 (2026-06-18)
+
+Cursor host support and a host-aware default backend.
+
+### Behavior changes
+
+- **The default outside backend now follows the host.** On a **Codex** host the default outside agent (and library-mode lead) is now `codex` (previously `claude`); on **Cursor** it is `cursor`; on **Claude Code** it remains `claude`. Explicit `backend=`, `AGENTCOUNCIL_OUTSIDE_AGENT`, and a configured `default_profile` all still take precedence. If you relied on the implicit Codex-host + Claude-outside cross-backend pairing, set `AGENTCOUNCIL_OUTSIDE_AGENT=claude` (or a `default_profile`) to restore it.
+
+### Features
+
+- **Runs on Cursor:** AgentCouncil now runs natively in Cursor. Ships `.cursor/mcp.json` (registers the MCP server, sets `AGENTCOUNCIL_HOST=cursor`) and `.cursor/commands/*.md` slash commands for every skill (`brainstorm`, `challenge`, `decide`, `review`, `inspect`, `autopilot`), generated from the canonical `skills/*/SKILL.md` via `scripts/generate-cursor-commands.py`. See [docs/CURSOR.md](docs/CURSOR.md).
+- **Host-aware default backend:** the default outside agent (and library-mode lead) is now **the host AgentCouncil runs under** — Claude Code → `claude`, Codex → `codex`, Cursor → `cursor` — falling back to `claude` when no host is identified. Host detection lives in `agentcouncil/host.py` (`AGENTCOUNCIL_HOST` env, then `CODEX_PLUGIN_ROOT`/`CLAUDE_PLUGIN_ROOT` markers). Explicit `backend=`, env vars, and `default_profile` still take precedence.
+- **Cursor backend / model selection:** new `CursorProvider` (outside agent) runs the `cursor-agent` CLI in headless JSON print mode with native workspace access, using a stateless **replay** session strategy (full history re-sent each turn), plus `CursorAdapter` (lead, library mode). `--model` lets a deliberation use different Cursor models (e.g. `cursor-gpt5` vs `cursor-sonnet`) independent of the editor's model. `cursor` is now a valid outside and lead backend. Note: the `cursor-agent` CLI contract (flags, JSON shape, `--resume`) is doc-derived and not yet verified against a live binary — see [docs/CURSOR.md](docs/CURSOR.md).
+
+### Docs
+
+- New [docs/CURSOR.md](docs/CURSOR.md) setup guide.
+- `docs/BACKENDS.md` documents the Cursor backend, the host-aware default, and Cursor as a lead, with updated precedence/capability tables.
+- README documents Cursor as a host and the host-aware default.
+
 ## 0.4.0 (2026-05-03)
 
 Feature release for configurable lead agents in MCP/library mode.
